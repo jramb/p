@@ -56,18 +56,6 @@ type orgEntry struct {
 }
 type orgData []orgEntry
 
-var instructions = `Punch 2016 by jramb
--------------------
-Usage: punch <command> {<opt>, ...}
-
-commands:
-  h[elp]      Show this message
-  ls / show   lists tasks in clock filej
-  in <task>   Check in (start timer) for task (also stops all other timers)
-  out         Check out (stops ALL timers)
-
-You need to set the environment variable CLOCKFILE (pointing to an existing file)`
-
 func errCheck(err error, msg string) {
 	if err != nil {
 		log.Fatalf("%s: %s", msg, err)
@@ -145,7 +133,7 @@ func findHeader(tx *sql.Tx, header string) (hdr RowId, headerText string, err er
 }
 
 func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
-	res, err := tx.Exec(`insert into headers (header, parent, depth,creation_date) values(?,?,?,?)`,
+	res, err := tx.Exec(`insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
 		header, parent, depth, programStartTime)
 	errCheck(err, `inserting header`)
 	rowid, err := res.LastInsertId()
@@ -170,19 +158,23 @@ func prepareDB(dbfile string) *sql.DB {
 	, header text
 	, depth int
 	, parent integer
+	, active boolean
 	, creation_date datetime
 	)`)
-	errCheck(err, "create header")
+	errCheck(err, "create header table")
 	_, err = db.Exec(`create table if not exists entries
 	( header_id integer
 	, start datetime not null
 	, end datetime)`)
-	errCheck(err, "create entries")
+	errCheck(err, "create entries table")
+	_, err = db.Exec(`create table if not exists log
+	( creation_date datetime, log_text text)`)
+	errCheck(err, "create log table")
 	_, err = db.Exec(`create table if not exists params
 	(param text,value text,
 	primary key (param))`)
-	errCheck(err, "create params")
-	setParam(db, "version", "1")
+	errCheck(err, "create params table")
+	setParam(db, "version", "2")
 	//log.Print(`version=` + getParam(db, `version`))
 	return db
 }
@@ -204,6 +196,12 @@ func closeAll(tx *sql.Tx, argv []string) {
 	errCheck(err, `closeAll RowsAffected`)
 	_ = updatedCnt
 	//fmt.Printf("Closed %d entries\n", updatedCnt)
+}
+
+func logEntry(tx *sql.Tx, argv []string) {
+	_, err := tx.Exec(`insert into log (creation_date, log_text) values (?,?)`,
+		programStartTime, strings.Join(argv, " "))
+	errCheck(err, `logging time`)
 }
 
 func checkIn(tx *sql.Tx, argv []string) {
@@ -398,7 +396,7 @@ func loadTimeFile(clockfile string,
 }
 
 func showHeaders(tx *sql.Tx, argv []string) {
-	rows, err := tx.Query(`select rowid, header, depth from headers`)
+	rows, err := tx.Query(`select rowid, header, depth from headers where active=1`)
 	errCheck(err, `Selecting headers`)
 	defer rows.Close()
 	for rows.Next() {
@@ -410,7 +408,13 @@ func showHeaders(tx *sql.Tx, argv []string) {
 	}
 }
 
-func decodeTimeFrame(str string) (from, to time.Time) {
+func decodeTimeFrame(argv []string) (from, to time.Time) {
+	var str string
+	if len(argv) > 0 {
+		str = argv[0]
+	} else {
+		str = ""
+	}
 	parts := strings.Split(str, `-`)
 	var unit string
 	var x int
@@ -480,14 +484,30 @@ func running(tx *sql.Tx, argv []string, extra string) {
 	}
 }
 
-func showTimes(tx *sql.Tx, argv []string) {
-	var from, to time.Time
+func listLogEntries(tx *sql.Tx, argv []string) {
+	from, to := decodeTimeFrame(argv)
 	var filter string
-	if len(argv) > 0 {
-		from, to = decodeTimeFrame(argv[0])
-	} else {
-		from, to = decodeTimeFrame("")
+	if len(argv) > 1 {
+		filter = argv[1]
 	}
+	rows, err := tx.Query(`
+select log_text, creation_date from log
+where creation_date between ? and ?
+and lower(log_text) like lower('%'||?||'%')
+`, from, to, filter)
+	errCheck(err, `selecting log entries`)
+	defer rows.Close()
+	for rows.Next() {
+		var txt string
+		var logTime time.Time
+		rows.Scan(&txt, &logTime)
+		fmt.Printf("%s: %s\n", simpleDate(logTime), txt)
+	}
+}
+
+func showTimes(tx *sql.Tx, argv []string) {
+	from, to := decodeTimeFrame(argv)
+	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
@@ -500,6 +520,7 @@ select rowid, header, depth,
 from headers h
 where sum_duration is not null
 and lower(header) like lower('%'||?||'%')
+and h.active=1
 order by sum_duration desc
 `, from, to, filter)
 
@@ -516,26 +537,21 @@ order by sum_duration desc
 		rows.Scan(&id, &head, &depth, &duration)
 		dur := time.Duration(duration * 1000000000)
 		total += dur
-		fmt.Printf("%10s %s\n", myDuration(dur), head)
+		fmt.Printf("%14s %s\n", myDuration(dur), head)
 	}
-	fmt.Printf("Total: %s\n", myDuration(total))
+	fmt.Printf("Total: %7s\n", myDuration(total))
 }
 
 func showDays(tx *sql.Tx, argv []string) {
-	var from, to time.Time
+	from, to := decodeTimeFrame(argv)
 	var filter string
-	if len(argv) > 0 {
-		from, to = decodeTimeFrame(argv[0])
-	} else {
-		from, to = decodeTimeFrame("")
-	}
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
 	rows, err := tx.Query(`
 with b as (select h.header, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
-join headers h on h.header_id = e.header_id
+join headers h on h.header_id = e.header_id and h.active=1
 where e.end is not null
 and e.start between ? and ?)
 select start_date, header, depth, sum(duration)
@@ -559,25 +575,21 @@ order by start_date asc
 		rows.Scan(&start, &head, &depth, &duration)
 		dur := time.Duration(duration * 1000000000)
 		total += dur
-		fmt.Printf("%s: %10s %s\n", start, myDuration(dur), head)
+		fmt.Printf("%s: %6s %s\n", start, myDuration(dur), head)
 	}
-	fmt.Printf("Total: %s\n", myDuration(total))
+	fmt.Printf("     Total: %6s\n", myDuration(total))
 }
 
 func showOrg(tx *sql.Tx, argv []string) {
-	var from, to time.Time
+	from, to := decodeTimeFrame(argv)
 	var filter string
-	if len(argv) > 0 {
-		from, to = decodeTimeFrame(argv[0])
-	} else {
-		from, to = decodeTimeFrame("")
-	}
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
 	hdrs, err := tx.Query(`select header_id, header, depth
 	from headers
-	where lower(header) like lower('%'||?||'%')`, filter)
+	where active=1
+	and lower(header) like lower('%'||?||'%')`, filter)
 	errCheck(err, `fetching headers`)
 	defer hdrs.Close()
 	for hdrs.Next() {
@@ -666,10 +678,32 @@ func main() {
 		running(tx, argv, "\\n")
 	case `out`:
 		closeAll(tx, argv)
+	case `log`:
+		logEntry(tx, argv)
+	case `ll`:
+		listLogEntries(tx, argv)
 	case `in`:
 		checkIn(tx, argv)
 	default:
-		fmt.Println(instructions)
+		fmt.Println(`Punch 2016 by jramb
+-------------------
+Usage: p <command> {<opt>, ...}
+
+commands:
+  h[elp]       show this message
+  import       imports an org-mode file
+  head         lists all active headers
+  sum/ls/show  lists and sums up headers time entries
+  print        prints all time entries in org-mode format
+  ru[nning]    shows the currently running entry
+  pro[mpt]     shows the currently running entry with '\\n'
+  in <task>    check in (start timer) for task (also stops all other timers)
+  out          check out (stops ALL timers)
+
+  log          add a log entry
+  ll           show log entries
+
+You need to set the environment variable CLOCKFILE`)
 	}
 	tx.Commit() // not using defer
 }
