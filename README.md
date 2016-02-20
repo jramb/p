@@ -14,8 +14,14 @@ I made in JavaScript: https://github.com/jramb/punch
 
 Working with JavaScript makes you want to dip your fingers
 into hot lava after a while. Also for testing Go I started
-with a rewrite. After a while I found out that SQLite is a
+with a rewrite. After a while I also found out that SQLite is a
 much better back-end to store time data.
 
 Mostly because SQL rocks and SQLite is a really good file format.
+
+Punch was also inspired by "todo.txt", which also is recommended
+to be installed as a single character command: `t`: http://todotxt.com/
+
+Of course I abandoned the idea of having my database in an org-flat-file
+structure, event if that was very convenient for "database maintenance".
 
