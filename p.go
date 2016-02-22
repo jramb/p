@@ -148,6 +148,18 @@ func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
 }
 
+func prepareTx(db *sql.DB) *sql.Tx {
+	tx, err := db.Begin()
+	errCheck(err, "begin transaction")
+	return tx
+}
+
+func openDB(dbfile string) *sql.DB {
+	db, err := sql.Open("sqlite3", dbfile)
+	errCheck(err, "Open database")
+	return db
+}
+
 func prepareDB(dbfile string) *sql.DB {
 	db, err := sql.Open("sqlite3", dbfile)
 	errCheck(err, "Open database")
@@ -199,9 +211,12 @@ func closeAll(tx *sql.Tx, argv []string) {
 }
 
 func logEntry(tx *sql.Tx, argv []string) {
-	_, err := tx.Exec(`insert into log (creation_date, log_text) values (?,?)`,
-		programStartTime, strings.Join(argv, " "))
-	errCheck(err, `logging time`)
+	logString := strings.Join(argv, " ")
+	if logString != "" {
+		_, err := tx.Exec(`insert into log (creation_date, log_text) values (?,?)`,
+			programStartTime, strings.Join(argv, " "))
+		errCheck(err, `logging time`)
+	}
 }
 
 func checkIn(tx *sql.Tx, argv []string) {
@@ -351,6 +366,7 @@ func loadOrgFile(clockfile string, c chan orgEntry) {
 }
 
 func resetDb(tx *sql.Tx) {
+	log.Panic("NOT resetting database")
 	fmt.Println("Erasing all data")
 	_, err := tx.Exec(`delete from entries`)
 	errCheck(err, `delete entries`)
@@ -395,8 +411,8 @@ func loadTimeFile(clockfile string,
 	data = doer(data, argv)
 }
 
-func showHeaders(tx *sql.Tx, argv []string) {
-	rows, err := tx.Query(`select rowid, header, depth from headers where active=1`)
+func showHeaders(db *sql.DB, argv []string) {
+	rows, err := db.Query(`select rowid, header, depth from headers where active=1`)
 	errCheck(err, `Selecting headers`)
 	defer rows.Close()
 	for rows.Next() {
@@ -469,8 +485,8 @@ func timeFrame(from, to *time.Time) string {
 	}
 }
 
-func running(tx *sql.Tx, argv []string, extra string) {
-	rows, err := tx.Query(`select e.start, h.header
+func running(db *sql.DB, argv []string, extra string) {
+	rows, err := db.Query(`select e.start, h.header
 	from entries e
 	join headers h on h.header_id = e.header_id
 	where e.end is null`)
@@ -484,13 +500,13 @@ func running(tx *sql.Tx, argv []string, extra string) {
 	}
 }
 
-func listLogEntries(tx *sql.Tx, argv []string) {
+func listLogEntries(db *sql.DB, argv []string) {
 	from, to := decodeTimeFrame(argv)
 	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := tx.Query(`
+	rows, err := db.Query(`
 select log_text, creation_date from log
 where creation_date between ? and ?
 and lower(log_text) like lower('%'||?||'%')
@@ -505,13 +521,13 @@ and lower(log_text) like lower('%'||?||'%')
 	}
 }
 
-func showTimes(tx *sql.Tx, argv []string) {
+func showTimes(db *sql.DB, argv []string) {
 	from, to := decodeTimeFrame(argv)
 	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := tx.Query(`
+	rows, err := db.Query(`
 select rowid, header, depth,
   (select sum(strftime('%s',end)-strftime('%s',start)) sum_duration
 	from entries e
@@ -542,13 +558,13 @@ order by sum_duration desc
 	fmt.Printf("Total: %7s\n", myDuration(total))
 }
 
-func showDays(tx *sql.Tx, argv []string) {
+func showDays(db *sql.DB, argv []string) {
 	from, to := decodeTimeFrame(argv)
 	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := tx.Query(`
+	rows, err := db.Query(`
 with b as (select h.header, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
@@ -580,13 +596,13 @@ order by start_date asc
 	fmt.Printf("     Total: %6s\n", myDuration(total))
 }
 
-func showOrg(tx *sql.Tx, argv []string) {
+func showOrg(db *sql.DB, argv []string) {
 	from, to := decodeTimeFrame(argv)
 	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	hdrs, err := tx.Query(`select header_id, header, depth
+	hdrs, err := db.Query(`select header_id, header, depth
 	from headers
 	where active=1
 	and lower(header) like lower('%'||?||'%')`, filter)
@@ -602,7 +618,7 @@ func showOrg(tx *sql.Tx, argv []string) {
 			deep:   depth,
 			header: headerTxt,
 		}
-		entr, err := tx.Query(`select start, end, strftime('%s',end)-strftime('%s',start) duration
+		entr, err := db.Query(`select start, end, strftime('%s',end)-strftime('%s',start) duration
 		from entries
 		where header_id = ?
 		and start between ? and ?
@@ -655,35 +671,45 @@ func main() {
 	clockfile := os.Getenv(`CLOCKFILE`)
 	clockdb := clockfile + `.db`
 	//fmt.Println(clockfile)
-	db := prepareDB(clockdb)
+	var tx *sql.Tx
+	var db *sql.DB
+	if cmd == `init` {
+		db = prepareDB(clockdb)
+	} else {
+		db = openDB(clockdb)
+	}
 	defer db.Close()
-	tx, err := db.Begin()
-	errCheck(err, "begin transaction")
 	switch cmd {
+	case `init`:
+		fmt.Printf("Initialized: %s\n", clockdb)
+	case `head`:
+		showHeaders(db, argv)
+	case `sum`, `ls`, `show`:
+		showTimes(db, argv)
+	case `day`, `days`:
+		showDays(db, argv)
+	case `print`, `org`:
+		showOrg(db, argv)
+	case `ru`, `running`:
+		running(db, argv, "")
+	case `pro`, `prompt`:
+		running(db, argv, "\\n")
+	case `ll`:
+		listLogEntries(db, argv)
+	case `out`:
+		tx = prepareTx(db)
+		closeAll(tx, argv)
+	case `log`:
+		tx = prepareTx(db)
+		logEntry(tx, argv)
+	case `in`:
+		tx = prepareTx(db)
+		checkIn(tx, argv)
 	case `import`:
+		tx = prepareTx(db)
 		resetDb(tx)
 		//os.Remove(clockdb)
 		importOrgData(tx, argv[0])
-	case `head`:
-		showHeaders(tx, argv)
-	case `sum`, `ls`, `show`:
-		showTimes(tx, argv)
-	case `day`, `days`:
-		showDays(tx, argv)
-	case `print`, `org`:
-		showOrg(tx, argv)
-	case `ru`, `running`:
-		running(tx, argv, "")
-	case `pro`, `prompt`:
-		running(tx, argv, "\\n")
-	case `out`:
-		closeAll(tx, argv)
-	case `log`:
-		logEntry(tx, argv)
-	case `ll`:
-		listLogEntries(tx, argv)
-	case `in`:
-		checkIn(tx, argv)
 	default:
 		fmt.Println(`Punch 2016 by jramb
 -------------------
@@ -691,6 +717,7 @@ Usage: p <command> {<opt>, ...}
 
 commands:
   h[elp]       show this message
+  init         initialize $CLOCKFILE.db
   import       imports an org-mode file
   head         lists all active headers
   sum/ls/show  lists and sums up headers time entries
@@ -705,5 +732,7 @@ commands:
 
 You need to set the environment variable CLOCKFILE`)
 	}
-	tx.Commit() // not using defer
+	if tx != nil {
+		tx.Commit() // not using defer
+	}
 }

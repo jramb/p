@@ -1,4 +1,4 @@
-default: linux-slim
+default: install
 
 install:
 	go install
