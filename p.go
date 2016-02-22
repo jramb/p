@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -20,7 +21,11 @@ import (
 
 var orgDateTime = "2006-01-02 Mon 15:04"
 var simpleDateFormat = `2006-01-02`
+var timeFormat = `15:04`
 var programStartTime = time.Now().Round(time.Minute)
+var force = flag.Bool("force", false, "force the action")
+var extendDuration = flag.Duration("e", time.Duration(0), "extend duration")
+var roundTime = flag.Bool("r", false, "round times")
 
 type lineType int
 type RowId int64
@@ -148,7 +153,7 @@ func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
 }
 
-func prepareTx(db *sql.DB) *sql.Tx {
+func getTx(db *sql.DB) *sql.Tx {
 	tx, err := db.Begin()
 	errCheck(err, "begin transaction")
 	return tx
@@ -191,23 +196,55 @@ func prepareDB(dbfile string) *sql.DB {
 	return db
 }
 
-func closeClockEntry(e *orgEntry) {
-	if e.lType != clock {
-		log.Fatalf("This is not a clock entry: %v", e)
-	}
-	if e.end == nil {
-		e.end = &programStartTime
-		e.duration = e.end.Sub(*e.start)
-	}
-}
+/*
+ *func closeClockEntry(e *orgEntry) {
+ *  if e.lType != clock {
+ *    log.Fatalf("This is not a clock entry: %v", e)
+ *  }
+ *  if e.end == nil {
+ *    modEnd := programStartTime.Add(*extendDuration)
+ *    e.end = &modEnd
+ *    e.duration = e.end.Sub(*e.start)
+ *  }
+ *}
+ */
 
 func closeAll(tx *sql.Tx, argv []string) {
-	res, err := tx.Exec(`update entries set end=? where end is null`, programStartTime)
+	res, err := tx.Exec(`update entries set end=? where end is null`, programStartTime.Add(*extendDuration))
 	errCheck(err, `closing all end times`)
 	updatedCnt, err := res.RowsAffected()
 	errCheck(err, `closeAll RowsAffected`)
 	_ = updatedCnt
 	//fmt.Printf("Closed %d entries\n", updatedCnt)
+}
+
+func modifyOpen(tx *sql.Tx, argv []string) {
+	if *extendDuration == 0 {
+		fmt.Fprintln(os.Stderr, `Modify requires an -e(xtend) duration!`)
+		return
+	}
+	if *extendDuration >= 24*time.Hour || *extendDuration <= -24*time.Hour {
+		fmt.Fprintf(os.Stderr, "Extend duration %s not realistic\n", *extendDuration)
+		return
+	}
+
+	rows, err := tx.Query(`select start, rowid from entries where end is null`)
+	errCheck(err, `getting open entries`)
+	defer rows.Close()
+	var cnt int = 0
+	for rows.Next() {
+		cnt++
+		var start time.Time
+		var rowid int
+		rows.Scan(&start, &rowid)
+		newStart := start.Add(-*extendDuration)
+		fmt.Printf("New start: %s (added %s)\n", newStart.Format(timeFormat), *extendDuration)
+		_, err := tx.Exec(`update entries set start=? where rowid = ?`, newStart, rowid)
+		errCheck(err, `modifying entry`)
+	}
+	if cnt == 0 {
+		fmt.Printf(`Nothing open, maybe modify latest entry? [TODO]`)
+	}
 }
 
 func logEntry(tx *sql.Tx, argv []string) {
@@ -230,9 +267,10 @@ func checkIn(tx *sql.Tx, argv []string) {
 	hdr, headerText, err := findHeader(tx, header)
 	errCheck(err, `checkIn`)
 
+	modStart := programStartTime.Add(-*extendDuration)
 	entry := orgEntry{
 		lType: clock,
-		start: &programStartTime,
+		start: &modStart,
 		//end:
 		//duration    time.Duration
 		//depthChange int
@@ -366,7 +404,9 @@ func loadOrgFile(clockfile string, c chan orgEntry) {
 }
 
 func resetDb(tx *sql.Tx) {
-	log.Panic("NOT resetting database")
+	if !*force {
+		log.Panic("You did not use 'force', aborting")
+	}
 	fmt.Println("Erasing all data")
 	_, err := tx.Exec(`delete from entries`)
 	errCheck(err, `delete entries`)
@@ -661,8 +701,11 @@ func listClock(data orgData, argv []string) orgData {
 }
 
 func main() {
-	argv := os.Args[1:]                // without prog name
-	defaultArgs := []string{`default`} //[len(argv):]
+	//argv := os.Args[1:] // without prog name
+	flag.Parse()
+	argv := flag.Args()
+	//fmt.Printf("argv=%v, flag=%v, force=%v\n", argv, flag.Args(), *force)
+	defaultArgs := []string{`help`} //[len(argv):]
 	if len(argv) < len(defaultArgs) {
 		defaultArgs := defaultArgs[len(argv):]
 		argv = append(argv, defaultArgs...)
@@ -697,28 +740,31 @@ func main() {
 	case `ll`:
 		listLogEntries(db, argv)
 	case `out`:
-		tx = prepareTx(db)
+		tx = getTx(db)
 		closeAll(tx, argv)
+	case `mod`:
+		tx = getTx(db)
+		modifyOpen(tx, argv)
 	case `log`:
-		tx = prepareTx(db)
+		tx = getTx(db)
 		logEntry(tx, argv)
 	case `in`:
-		tx = prepareTx(db)
+		tx = getTx(db)
 		checkIn(tx, argv)
 	case `import`:
-		tx = prepareTx(db)
+		tx = getTx(db)
 		resetDb(tx)
 		//os.Remove(clockdb)
 		importOrgData(tx, argv[0])
 	default:
-		fmt.Println(`Punch 2016 by jramb
--------------------
-Usage: p <command> {<opt>, ...}
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, `
+parameters: {<flags>} <command> {<time range> {, {filter> ...}}
 
 commands:
   h[elp]       show this message
   init         initialize $CLOCKFILE.db
-  import       imports an org-mode file
+  import       imports an org-mode file (requires force)
   head         lists all active headers
   sum/ls/show  lists and sums up headers time entries
   print        prints all time entries in org-mode format
@@ -726,11 +772,17 @@ commands:
   pro[mpt]     shows the currently running entry with '\\n'
   in <task>    check in (start timer) for task (also stops all other timers)
   out          check out (stops ALL timers)
+  mod          modifies open timer (requires -e)
 
   log          add a log entry
   ll           show log entries
 
-You need to set the environment variable CLOCKFILE`)
+You need to set the environment variable CLOCKFILE
+Optional parameters:`)
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "Force: %v, extend duration: %v\n", *force, *extendDuration)
+		fmt.Fprintln(os.Stderr, `
+-- Punch 2016 by jramb --`)
 	}
 	if tx != nil {
 		tx.Commit() // not using defer
