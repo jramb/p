@@ -22,10 +22,10 @@ import (
 var orgDateTime = "2006-01-02 Mon 15:04"
 var simpleDateFormat = `2006-01-02`
 var timeFormat = `15:04`
-var programStartTime = time.Now().Round(time.Minute)
+var effectiveTimeNow = time.Now() //.Round(time.Minute)
 var force = flag.Bool("force", false, "force the action")
-var extendDuration = flag.Duration("e", time.Duration(0), "extend duration")
-var roundTime = flag.Bool("r", false, "round times")
+var modifyEffectiveTime = flag.Duration("m", time.Duration(0), "modified effective time, e.g. -m 7m subtracts 7 minutes")
+var roundTime = flag.Int64("r", 1, "round multiple of minutes")
 
 type lineType int
 type RowId int64
@@ -115,9 +115,15 @@ func setParam(db *sql.DB, param string, value string) {
 	}
 }
 
-func findHeader(tx *sql.Tx, header string) (hdr RowId, headerText string, err error) {
-	rows, err := tx.Query(`select rowid, header from headers where lower(header) like lower('%'||?||'%')`,
-		header)
+func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText string, err error) {
+	var rows *sql.Rows
+	if handle != "" {
+		rows, err = tx.Query(`select rowid, header from headers
+		where handle = ?`, handle)
+	} else {
+		rows, err = tx.Query(`select rowid, header from headers
+		where lower(header) like lower('%'||?||'%')`, header)
+	}
 	errCheck(err, `findHeader`)
 	defer rows.Close()
 	var hdrId int
@@ -139,7 +145,7 @@ func findHeader(tx *sql.Tx, header string) (hdr RowId, headerText string, err er
 
 func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
 	res, err := tx.Exec(`insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
-		header, parent, depth, programStartTime)
+		header, parent, depth, effectiveTimeNow)
 	errCheck(err, `inserting header`)
 	rowid, err := res.LastInsertId()
 	fmt.Printf("Inserted %s\n", header)
@@ -172,6 +178,7 @@ func prepareDB(dbfile string) *sql.DB {
 	//fmt.Printf("database type: %T\n", db)
 	_, err = db.Exec(`create table if not exists headers
 	( header_id integer primary key autoincrement
+	, handle text
 	, header text
 	, depth int
 	, parent integer
@@ -191,7 +198,15 @@ func prepareDB(dbfile string) *sql.DB {
 	(param text,value text,
 	primary key (param))`)
 	errCheck(err, "create params table")
-	setParam(db, "version", "2")
+	_, err = db.Exec(`create table if not exists todo
+	( todo_id integer primary key autoincrement
+	, title text
+	, handle text
+	, status text
+	, creation_date datetime not null
+  , done_date datetime)`)
+	errCheck(err, "create todo table")
+	setParam(db, "version", "3")
 	//log.Print(`version=` + getParam(db, `version`))
 	return db
 }
@@ -202,7 +217,7 @@ func prepareDB(dbfile string) *sql.DB {
  *    log.Fatalf("This is not a clock entry: %v", e)
  *  }
  *  if e.end == nil {
- *    modEnd := programStartTime.Add(*extendDuration)
+ *    modEnd := effectiveTimeNow
  *    e.end = &modEnd
  *    e.duration = e.end.Sub(*e.start)
  *  }
@@ -210,7 +225,7 @@ func prepareDB(dbfile string) *sql.DB {
  */
 
 func closeAll(tx *sql.Tx, argv []string) {
-	res, err := tx.Exec(`update entries set end=? where end is null`, programStartTime.Add(*extendDuration))
+	res, err := tx.Exec(`update entries set end=? where end is null`, effectiveTimeNow)
 	errCheck(err, `closing all end times`)
 	updatedCnt, err := res.RowsAffected()
 	errCheck(err, `closeAll RowsAffected`)
@@ -219,12 +234,12 @@ func closeAll(tx *sql.Tx, argv []string) {
 }
 
 func modifyOpen(tx *sql.Tx, argv []string) {
-	if *extendDuration == 0 {
-		fmt.Fprintln(os.Stderr, `Modify requires an -e(xtend) duration!`)
+	if *modifyEffectiveTime == 0 {
+		fmt.Fprintln(os.Stderr, `Modify requires an -m(odified) time!`)
 		return
 	}
-	if *extendDuration >= 24*time.Hour || *extendDuration <= -24*time.Hour {
-		fmt.Fprintf(os.Stderr, "Extend duration %s not realistic\n", *extendDuration)
+	if *modifyEffectiveTime >= 24*time.Hour || *modifyEffectiveTime <= -24*time.Hour {
+		fmt.Fprintf(os.Stderr, "Extend duration %s not realistic\n", *modifyEffectiveTime)
 		return
 	}
 
@@ -237,8 +252,8 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 		var start time.Time
 		var rowid int
 		rows.Scan(&start, &rowid)
-		newStart := start.Add(-*extendDuration)
-		fmt.Printf("New start: %s (added %s)\n", newStart.Format(timeFormat), *extendDuration)
+		newStart := start.Add(-*modifyEffectiveTime)
+		fmt.Printf("New start: %s (added %s)\n", newStart.Format(timeFormat), *modifyEffectiveTime)
 		_, err := tx.Exec(`update entries set start=? where rowid = ?`, newStart, rowid)
 		errCheck(err, `modifying entry`)
 	}
@@ -251,26 +266,87 @@ func logEntry(tx *sql.Tx, argv []string) {
 	logString := strings.Join(argv, " ")
 	if logString != "" {
 		_, err := tx.Exec(`insert into log (creation_date, log_text) values (?,?)`,
-			programStartTime, strings.Join(argv, " "))
+			effectiveTimeNow, strings.Join(argv, " "))
 		errCheck(err, `logging time`)
 	}
 }
 
-func checkIn(tx *sql.Tx, argv []string) {
-	closeAll(tx, argv)
-
-	if len(argv) < 1 {
-		log.Fatal("Need a header (or part of it) to check in")
+func verifyHandle(db *sql.DB, handle string) string {
+	if handle == "" {
+		rows, err := db.Query(`select h.handle
+		from entries e
+		join headers h on e.header_id = h.header_id
+		where e.end is null`)
+		errCheck(err, `fetch current handle`)
+		if rows.Next() {
+			var h string
+			rows.Scan(&h)
+			return h
+		} else {
+			return ""
+		}
 	}
-	header := argv[0]
+	rows, err := db.Query(`select handle from headers where handle = ?`, handle)
+	errCheck(err, `checking handle`)
+	defer rows.Close()
+	if !rows.Next() {
+		errCheck(errors.New("handle not found"), `handle check`)
+	}
+	return handle
+}
+
+func addTodo(tx *sql.Tx, argv []string, handle string) {
+	title := strings.Join(argv, " ")
+	if len(argv) == 0 {
+		log.Fatal("missing parameter: {@handle} todo text")
+	}
+	_, err := tx.Exec(`insert into todo(handle,title,status,creation_date) values(?,?,?,?)`,
+		handle, title, `O`, effectiveTimeNow)
+	errCheck(err, `creating todo`)
+}
+
+func todoDone(tx *sql.Tx, argv []string) {
+	if len(argv) != 1 {
+		log.Fatal("missing or wrong parameter: NN (todo number)")
+	}
+	log.Fatal("not implemented yet")
+}
+
+func showTodo(db *sql.DB, argv []string, handle string) {
+	rows, err := db.Query(`select handle, title, creation_date
+	from todo
+	where handle = coalesce(?,handle)
+	and status='O' and done_date is null
+	order by creation_date asc`, handle)
+	errCheck(err, `selecting todos`)
+	defer rows.Close()
+	var cnt int = 0
+	for rows.Next() {
+		var handle string
+		var title string
+		var creation_date time.Time
+		rows.Scan(&handle, &title, &creation_date)
+		cnt++
+		fmt.Printf("%s #%02d %-40s\n", handle, cnt, title)
+	}
+}
+
+func checkIn(tx *sql.Tx, argv []string, handle string) {
+	var header string
+
+	if handle == "" {
+		if len(argv) < 1 {
+			log.Fatal("Need a handle (or part of header) to check in")
+		}
+		header = argv[0]
+	}
 	//log.Println("header to check into: " + header)
-	hdr, headerText, err := findHeader(tx, header)
+	hdr, headerText, err := findHeader(tx, header, handle)
 	errCheck(err, `checkIn`)
 
-	modStart := programStartTime.Add(-*extendDuration)
 	entry := orgEntry{
 		lType: clock,
-		start: &modStart,
+		start: &effectiveTimeNow,
 		//end:
 		//duration    time.Duration
 		//depthChange int
@@ -474,7 +550,7 @@ func decodeTimeFrame(argv []string) (from, to time.Time) {
 	parts := strings.Split(str, `-`)
 	var unit string
 	var x int
-	y, m, d := programStartTime.Date() // Day only
+	y, m, d := effectiveTimeNow.Date() // Day only
 	from = time.Date(y, m, d, 0, 0, 0, 0, time.Local)
 	var err error
 	if len(parts) > 0 {
@@ -503,7 +579,7 @@ func decodeTimeFrame(argv []string) (from, to time.Time) {
 		to = from.AddDate(0, 0, 1)
 	case "week":
 		//Sunday = 0
-		from = time.Date(y, m, d-7*x-(int(programStartTime.Weekday())+6)%7, 0, 0, 0, 0, time.Local)
+		from = time.Date(y, m, d-7*x-(int(effectiveTimeNow.Weekday())+6)%7, 0, 0, 0, 0, time.Local)
 		to = from.AddDate(0, 0, 7)
 	case "year":
 		from = time.Date(y, 1, 1, 0, 0, 0, 0, time.Local)
@@ -536,7 +612,7 @@ func running(db *sql.DB, argv []string, extra string) {
 		var start time.Time
 		var header string
 		rows.Scan(&start, &header)
-		fmt.Printf("%s: %s%s\n", header, myDuration(programStartTime.Sub(start)), extra)
+		fmt.Printf("%s: %s%s\n", header, myDuration(effectiveTimeNow.Sub(start)), extra)
 	}
 }
 
@@ -701,9 +777,21 @@ func listClock(data orgData, argv []string) orgData {
 }
 
 func main() {
-	//argv := os.Args[1:] // without prog name
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintln(os.Stderr, "Aborting: ", r)
+		}
+	}()
+
 	flag.Parse()
 	argv := flag.Args()
+
+	if modifyEffectiveTime != nil {
+		effectiveTimeNow = effectiveTimeNow.Add(-*modifyEffectiveTime)
+	}
+	if roundTime != nil {
+		effectiveTimeNow = effectiveTimeNow.Round(time.Minute * time.Duration(*roundTime))
+	}
 	//fmt.Printf("argv=%v, flag=%v, force=%v\n", argv, flag.Args(), *force)
 	defaultArgs := []string{`help`} //[len(argv):]
 	if len(argv) < len(defaultArgs) {
@@ -711,6 +799,11 @@ func main() {
 		argv = append(argv, defaultArgs...)
 	}
 	cmd, argv := argv[0], argv[1:]
+	var handle string
+	if len(argv) >= 1 && strings.HasPrefix(argv[0], `@`) {
+		handle = strings.ToLower(argv[0][1:])
+		argv = argv[1:]
+	}
 	clockfile := os.Getenv(`CLOCKFILE`)
 	clockdb := clockfile + `.db`
 	//fmt.Println(clockfile)
@@ -750,7 +843,19 @@ func main() {
 		logEntry(tx, argv)
 	case `in`:
 		tx = getTx(db)
-		checkIn(tx, argv)
+		closeAll(tx, argv)
+		handle = verifyHandle(db, handle)
+		checkIn(tx, argv, handle)
+	case `do`:
+		tx = getTx(db)
+		handle = verifyHandle(db, handle)
+		addTodo(tx, argv, handle)
+	case `todo`:
+		handle = verifyHandle(db, handle)
+		showTodo(db, argv, handle)
+	case `done`:
+		tx = getTx(db)
+		todoDone(tx, argv)
 	case `import`:
 		tx = getTx(db)
 		resetDb(tx)
@@ -777,13 +882,19 @@ commands:
   log          add a log entry
   ll           show log entries
 
+  do {@h} xxx  adds a TODO
+  todo {@h}    shows all TODOs for the current or specified handle
+  done <nn>    marks a TODO as done
+
 You need to set the environment variable CLOCKFILE
 Optional parameters:`)
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "Force: %v, extend duration: %v\n", *force, *extendDuration)
+		fmt.Fprintf(os.Stderr, "Force (-f): %v, effective time (-m): %v\n", *force, effectiveTimeNow)
+		fmt.Fprintf(os.Stderr, "Handle (header shortcut): %s\n", handle)
 		fmt.Fprintln(os.Stderr, `
 -- Punch 2016 by jramb --`)
 	}
+
 	if tx != nil {
 		tx.Commit() // not using defer
 	}
