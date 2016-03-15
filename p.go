@@ -26,11 +26,38 @@ var effectiveTimeNow = time.Now() //.Round(time.Minute)
 var force = flag.Bool("force", false, "force the action")
 var modifyEffectiveTime = flag.Duration("m", time.Duration(0), "modified effective time, e.g. -m 7m subtracts 7 minutes")
 var roundTime = flag.Int64("r", 1, "round multiple of minutes")
+var debug = flag.Bool("d", false, "debug")
 
 type lineType int
 type RowId int64
 
 type myDuration time.Duration
+
+func d(args ...interface{}) {
+	if *debug {
+		log.Println(args...)
+	}
+}
+
+func txQuery(tx *sql.Tx, query string, args ...interface{}) (*sql.Rows, error) {
+	d(`txQuery: `, query, args)
+	return tx.Query(query, args...)
+}
+
+func dbQuery(db *sql.DB, query string, args ...interface{}) (*sql.Rows, error) {
+	d(`txQuery: `, query, args)
+	return db.Query(query, args...)
+}
+
+func txExec(tx *sql.Tx, query string, args ...interface{}) (sql.Result, error) {
+	d(`txExec: `, query, args)
+	return tx.Exec(query, args...)
+}
+
+func dbExec(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
+	d(`dbExec: `, query, args)
+	return db.Exec(query, args...)
+}
 
 func (d myDuration) String() string {
 	ds := time.Duration(d).String()
@@ -63,7 +90,8 @@ type orgData []orgEntry
 
 func errCheck(err error, msg string) {
 	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
+		panic(error(fmt.Errorf("%s: %s", msg, err)))
+		//log.Panicf("%s: %s", msg, err)
 	}
 }
 
@@ -95,7 +123,7 @@ func copyFileContents(src, dst string) (err error) {
 }
 
 func getParam(db *sql.DB, param string) string {
-	rows, err := db.Query(`select value from params where param=?`, param)
+	rows, err := dbQuery(db, `select value from params where param=?`, param)
 	errCheck(err, "selecting getParam")
 	defer rows.Close()
 	for rows.Next() {
@@ -108,9 +136,9 @@ func getParam(db *sql.DB, param string) string {
 
 func setParam(db *sql.DB, param string, value string) {
 	//log.Print(`in setParam`)
-	_, err := db.Exec(`insert into params (param, value) values(?,?)`, param, value)
+	_, err := dbExec(db, `insert into params (param, value) values(?,?)`, param, value)
 	if err != nil {
-		_, err = db.Exec(`update params set value = ? where param= ?`, value, param)
+		_, err = dbExec(db, `update params set value = ? where param= ?`, value, param)
 		errCheck(err, `setParam`)
 	}
 }
@@ -118,12 +146,15 @@ func setParam(db *sql.DB, param string, value string) {
 func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText string, err error) {
 	var rows *sql.Rows
 	if handle != "" {
-		rows, err = tx.Query(`select rowid, header from headers
+		d(`Find using handle: `, handle)
+		rows, err = txQuery(tx, `select rowid, header from headers
 		where handle = ?`, handle)
 	} else {
-		rows, err = tx.Query(`select rowid, header from headers
-		where lower(header) like lower('%'||?||'%')`, header)
+		d(`Find using part of title: `, header)
+		rows, err = txQuery(tx, `select rowid, header from headers
+		where lower(header) like '%'||lower(?)||'%'`, header)
 	}
+	defer d(`done find header`)
 	errCheck(err, `findHeader`)
 	defer rows.Close()
 	var hdrId int
@@ -144,7 +175,7 @@ func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText
 }
 
 func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
-	res, err := tx.Exec(`insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
+	res, err := txExec(tx, `insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
 		header, parent, depth, effectiveTimeNow)
 	errCheck(err, `inserting header`)
 	rowid, err := res.LastInsertId()
@@ -153,7 +184,7 @@ func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
 }
 
 func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
-	_, err := tx.Exec(`insert into entries (header_id, start, end) values(?,?,?)`,
+	_, err := txExec(tx, `insert into entries (header_id, start, end) values(?,?,?)`,
 		headerId, entry.start, entry.end)
 	errCheck(err, "inserting entry")
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
@@ -176,7 +207,7 @@ func prepareDB(dbfile string) *sql.DB {
 	errCheck(err, "Open database")
 	//NOTdefer db.Close()
 	//fmt.Printf("database type: %T\n", db)
-	_, err = db.Exec(`create table if not exists headers
+	_, err = dbExec(db, `create table if not exists headers
 	( header_id integer primary key autoincrement
 	, handle text
 	, header text
@@ -186,19 +217,19 @@ func prepareDB(dbfile string) *sql.DB {
 	, creation_date datetime
 	)`)
 	errCheck(err, "create header table")
-	_, err = db.Exec(`create table if not exists entries
+	_, err = dbExec(db, `create table if not exists entries
 	( header_id integer
 	, start datetime not null
 	, end datetime)`)
 	errCheck(err, "create entries table")
-	_, err = db.Exec(`create table if not exists log
+	_, err = dbExec(db, `create table if not exists log
 	( creation_date datetime, log_text text)`)
 	errCheck(err, "create log table")
-	_, err = db.Exec(`create table if not exists params
+	_, err = dbExec(db, `create table if not exists params
 	(param text,value text,
 	primary key (param))`)
 	errCheck(err, "create params table")
-	_, err = db.Exec(`create table if not exists todo
+	_, err = dbExec(db, `create table if not exists todo
 	( todo_id integer primary key autoincrement
 	, title text
 	, handle text
@@ -214,7 +245,7 @@ func prepareDB(dbfile string) *sql.DB {
 /*
  *func closeClockEntry(e *orgEntry) {
  *  if e.lType != clock {
- *    log.Fatalf("This is not a clock entry: %v", e)
+ *    log.Panicf("This is not a clock entry: %v", e)
  *  }
  *  if e.end == nil {
  *    modEnd := effectiveTimeNow
@@ -224,13 +255,15 @@ func prepareDB(dbfile string) *sql.DB {
  *}
  */
 
-func closeAll(tx *sql.Tx, argv []string) {
-	res, err := tx.Exec(`update entries set end=? where end is null`, effectiveTimeNow)
+func closeAll(tx *sql.Tx) {
+	res, err := txExec(tx, `update entries set end=? where end is null`, effectiveTimeNow)
 	errCheck(err, `closing all end times`)
 	updatedCnt, err := res.RowsAffected()
 	errCheck(err, `closeAll RowsAffected`)
 	_ = updatedCnt
-	//fmt.Printf("Closed %d entries\n", updatedCnt)
+	if updatedCnt > 0 {
+		d("Closed entries: ", updatedCnt)
+	}
 }
 
 func modifyOpen(tx *sql.Tx, argv []string) {
@@ -243,7 +276,7 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 		return
 	}
 
-	rows, err := tx.Query(`select start, rowid from entries where end is null`)
+	rows, err := txQuery(tx, `select start, rowid from entries where end is null`)
 	errCheck(err, `getting open entries`)
 	defer rows.Close()
 	var cnt int = 0
@@ -254,7 +287,7 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 		rows.Scan(&start, &rowid)
 		newStart := start.Add(-*modifyEffectiveTime)
 		fmt.Printf("New start: %s (added %s)\n", newStart.Format(timeFormat), *modifyEffectiveTime)
-		_, err := tx.Exec(`update entries set start=? where rowid = ?`, newStart, rowid)
+		_, err := txExec(tx, `update entries set start=? where rowid = ?`, newStart, rowid)
 		errCheck(err, `modifying entry`)
 	}
 	if cnt == 0 {
@@ -265,28 +298,32 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 func logEntry(tx *sql.Tx, argv []string) {
 	logString := strings.Join(argv, " ")
 	if logString != "" {
-		_, err := tx.Exec(`insert into log (creation_date, log_text) values (?,?)`,
+		_, err := txExec(tx, `insert into log (creation_date, log_text) values (?,?)`,
 			effectiveTimeNow, strings.Join(argv, " "))
 		errCheck(err, `logging time`)
 	}
 }
 
-func verifyHandle(db *sql.DB, handle string) string {
+func verifyHandle(db *sql.DB, handle string, fixit bool) string {
 	if handle == "" {
-		rows, err := db.Query(`select h.handle
-		from entries e
-		join headers h on e.header_id = h.header_id
-		where e.end is null`)
-		errCheck(err, `fetch current handle`)
-		if rows.Next() {
-			var h string
-			rows.Scan(&h)
-			return h
+		if fixit {
+			rows, err := dbQuery(db, `select h.handle
+			from entries e
+			join headers h on e.header_id = h.header_id
+			where e.end is null`)
+			errCheck(err, `fetch current handle`)
+			if rows.Next() {
+				var h string
+				rows.Scan(&h)
+				return h
+			} else {
+				return ""
+			}
 		} else {
 			return ""
 		}
 	}
-	rows, err := db.Query(`select handle from headers where handle = ?`, handle)
+	rows, err := dbQuery(db, `select handle from headers where handle = ?`, handle)
 	errCheck(err, `checking handle`)
 	defer rows.Close()
 	if !rows.Next() {
@@ -298,22 +335,22 @@ func verifyHandle(db *sql.DB, handle string) string {
 func addTodo(tx *sql.Tx, argv []string, handle string) {
 	title := strings.Join(argv, " ")
 	if len(argv) == 0 {
-		log.Fatal("missing parameter: {@handle} todo text")
+		log.Panic("missing parameter: {@handle} todo text")
 	}
-	_, err := tx.Exec(`insert into todo(handle,title,status,creation_date) values(?,?,?,?)`,
+	_, err := txExec(tx, `insert into todo(handle,title,status,creation_date) values(?,?,?,?)`,
 		handle, title, `O`, effectiveTimeNow)
 	errCheck(err, `creating todo`)
 }
 
 func todoDone(tx *sql.Tx, argv []string) {
 	if len(argv) != 1 {
-		log.Fatal("missing or wrong parameter: NN (todo number)")
+		log.Panic("missing or wrong parameter: NN (todo number)")
 	}
-	log.Fatal("not implemented yet")
+	log.Panic("not implemented yet")
 }
 
 func showTodo(db *sql.DB, argv []string, handle string) {
-	rows, err := db.Query(`select handle, title, creation_date
+	rows, err := dbQuery(db, `select handle, title, creation_date
 	from todo
 	where handle = coalesce(?,handle)
 	and status='O' and done_date is null
@@ -334,9 +371,10 @@ func showTodo(db *sql.DB, argv []string, handle string) {
 func checkIn(tx *sql.Tx, argv []string, handle string) {
 	var header string
 
+	//fmt.Println(`checkIn`, argv, handle)
 	if handle == "" {
 		if len(argv) < 1 {
-			log.Fatal("Need a handle (or part of header) to check in")
+			panic(fmt.Errorf("Need a handle (or part of header) to check in"))
 		}
 		header = argv[0]
 	}
@@ -359,7 +397,7 @@ func parseDateTime(s string) *time.Time {
 	if s != "" {
 		p, err := time.ParseInLocation(orgDateTime, s, time.Local)
 		if err != nil {
-			log.Fatalf("Could not parse %s with %s", s, orgDateTime)
+			log.Panicf("Could not parse %s with %s", s, orgDateTime)
 		}
 		return &p
 	}
@@ -484,9 +522,9 @@ func resetDb(tx *sql.Tx) {
 		log.Panic("You did not use 'force', aborting")
 	}
 	fmt.Println("Erasing all data")
-	_, err := tx.Exec(`delete from entries`)
+	_, err := txExec(tx, `delete from entries`)
 	errCheck(err, `delete entries`)
-	_, err = tx.Exec(`delete from headers`)
+	_, err = txExec(tx, `delete from headers`)
 	errCheck(err, `delete header`)
 }
 
@@ -528,7 +566,7 @@ func loadTimeFile(clockfile string,
 }
 
 func showHeaders(db *sql.DB, argv []string) {
-	rows, err := db.Query(`select rowid, header, depth from headers where active=1`)
+	rows, err := dbQuery(db, `select rowid, header, depth from headers where active=1`)
 	errCheck(err, `Selecting headers`)
 	defer rows.Close()
 	for rows.Next() {
@@ -602,7 +640,7 @@ func timeFrame(from, to *time.Time) string {
 }
 
 func running(db *sql.DB, argv []string, extra string) {
-	rows, err := db.Query(`select e.start, h.header
+	rows, err := dbQuery(db, `select e.start, h.header
 	from entries e
 	join headers h on h.header_id = e.header_id
 	where e.end is null`)
@@ -622,7 +660,7 @@ func listLogEntries(db *sql.DB, argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := db.Query(`
+	rows, err := dbQuery(db, `
 select log_text, creation_date from log
 where creation_date between ? and ?
 and lower(log_text) like lower('%'||?||'%')
@@ -643,7 +681,7 @@ func showTimes(db *sql.DB, argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := db.Query(`
+	rows, err := dbQuery(db, `
 select rowid, header, depth,
   (select sum(strftime('%s',end)-strftime('%s',start)) sum_duration
 	from entries e
@@ -680,7 +718,7 @@ func showDays(db *sql.DB, argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := db.Query(`
+	rows, err := dbQuery(db, `
 with b as (select h.header, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
@@ -718,7 +756,7 @@ func showOrg(db *sql.DB, argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	hdrs, err := db.Query(`select header_id, header, depth
+	hdrs, err := dbQuery(db, `select header_id, header, depth
 	from headers
 	where active=1
 	and lower(header) like lower('%'||?||'%')`, filter)
@@ -734,7 +772,7 @@ func showOrg(db *sql.DB, argv []string) {
 			deep:   depth,
 			header: headerTxt,
 		}
-		entr, err := db.Query(`select start, end, strftime('%s',end)-strftime('%s',start) duration
+		entr, err := dbQuery(db, `select start, end, strftime('%s',end)-strftime('%s',start) duration
 		from entries
 		where header_id = ?
 		and start between ? and ?
@@ -777,8 +815,13 @@ func listClock(data orgData, argv []string) orgData {
 }
 
 func main() {
+	var tx *sql.Tx
+	var db *sql.DB
 	defer func() {
 		if r := recover(); r != nil {
+			if tx != nil {
+				tx.Rollback()
+			}
 			fmt.Fprintln(os.Stderr, "Aborting: ", r)
 		}
 	}()
@@ -806,9 +849,8 @@ func main() {
 	}
 	clockfile := os.Getenv(`CLOCKFILE`)
 	clockdb := clockfile + `.db`
+	d(`Clockfile:`, clockdb)
 	//fmt.Println(clockfile)
-	var tx *sql.Tx
-	var db *sql.DB
 	if cmd == `init` {
 		db = prepareDB(clockdb)
 	} else {
@@ -834,7 +876,7 @@ func main() {
 		listLogEntries(db, argv)
 	case `out`:
 		tx = getTx(db)
-		closeAll(tx, argv)
+		closeAll(tx)
 	case `mod`:
 		tx = getTx(db)
 		modifyOpen(tx, argv)
@@ -843,15 +885,15 @@ func main() {
 		logEntry(tx, argv)
 	case `in`:
 		tx = getTx(db)
-		closeAll(tx, argv)
-		handle = verifyHandle(db, handle)
+		handle = verifyHandle(db, handle, false)
+		closeAll(tx)
 		checkIn(tx, argv, handle)
 	case `do`:
 		tx = getTx(db)
-		handle = verifyHandle(db, handle)
+		handle = verifyHandle(db, handle, true)
 		addTodo(tx, argv, handle)
 	case `todo`:
-		handle = verifyHandle(db, handle)
+		handle = verifyHandle(db, handle, true)
 		showTodo(db, argv, handle)
 	case `done`:
 		tx = getTx(db)
