@@ -27,6 +27,7 @@ var force = flag.Bool("force", false, "force the action")
 var modifyEffectiveTime = flag.Duration("m", time.Duration(0), "modified effective time, e.g. -m 7m subtracts 7 minutes")
 var roundTime = flag.Int64("r", 1, "round multiple of minutes")
 var debug = flag.Bool("d", false, "debug")
+var all = flag.Bool("a", false, "show all")
 
 type lineType int
 type RowId int64
@@ -39,6 +40,9 @@ func d(args ...interface{}) {
 	}
 }
 
+/*
+These are only to be able to log what is being executed
+*/
 func txQuery(tx *sql.Tx, query string, args ...interface{}) (*sql.Rows, error) {
 	d(`txQuery: `, query, args)
 	return tx.Query(query, args...)
@@ -90,15 +94,16 @@ type orgData []orgEntry
 
 func errCheck(err error, msg string) {
 	if err != nil {
-		panic(error(fmt.Errorf("%s: %s", msg, err)))
-		//log.Panicf("%s: %s", msg, err)
+		panic(fmt.Errorf("%s: %s", msg, err))
 	}
 }
 
-// copyFileContents copies the contents of the file named src to the file named
-// by dst. The file will be created if it does not already exist. If the
-// destination file exists, all it's contents will be replaced by the contents
-// of the source file.
+/*
+copyFileContents copies the contents of the file named src to the file named
+by dst. The file will be created if it does not already exist. If the
+destination file exists, all it's contents will be replaced by the contents
+of the source file.
+*/
 func copyFileContents(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
@@ -203,11 +208,10 @@ func openDB(dbfile string) *sql.DB {
 }
 
 func prepareDB(dbfile string) *sql.DB {
-	db, err := sql.Open("sqlite3", dbfile)
-	errCheck(err, "Open database")
+	db := openDB(dbfile)
 	//NOTdefer db.Close()
 	//fmt.Printf("database type: %T\n", db)
-	_, err = dbExec(db, `create table if not exists headers
+	_, err := dbExec(db, `create table if not exists headers
 	( header_id integer primary key autoincrement
 	, handle text
 	, header text
@@ -231,13 +235,12 @@ func prepareDB(dbfile string) *sql.DB {
 	errCheck(err, "create params table")
 	_, err = dbExec(db, `create table if not exists todo
 	( todo_id integer primary key autoincrement
-	, title text
+	, title text not null
 	, handle text
-	, status text
 	, creation_date datetime not null
   , done_date datetime)`)
 	errCheck(err, "create todo table")
-	setParam(db, "version", "3")
+	setParam(db, "version", "4")
 	//log.Print(`version=` + getParam(db, `version`))
 	return db
 }
@@ -312,6 +315,7 @@ func verifyHandle(db *sql.DB, handle string, fixit bool) string {
 			join headers h on e.header_id = h.header_id
 			where e.end is null`)
 			errCheck(err, `fetch current handle`)
+			defer rows.Close()
 			if rows.Next() {
 				var h string
 				rows.Scan(&h)
@@ -322,6 +326,8 @@ func verifyHandle(db *sql.DB, handle string, fixit bool) string {
 		} else {
 			return ""
 		}
+	} else if handle == "*" {
+		return ""
 	}
 	rows, err := dbQuery(db, `select handle from headers where handle = ?`, handle)
 	errCheck(err, `checking handle`)
@@ -335,36 +341,108 @@ func verifyHandle(db *sql.DB, handle string, fixit bool) string {
 func addTodo(tx *sql.Tx, argv []string, handle string) {
 	title := strings.Join(argv, " ")
 	if len(argv) == 0 {
-		log.Panic("missing parameter: {@handle} todo text")
+		panic("missing parameter: {@handle} todo text")
 	}
-	_, err := txExec(tx, `insert into todo(handle,title,status,creation_date) values(?,?,?,?)`,
-		handle, title, `O`, effectiveTimeNow)
+	if handle == "" {
+		panic("missing handle, TODOs need a handle")
+	}
+	res, err := txExec(tx, `insert into todo(handle,title,creation_date) values(?,?,?)`,
+		handle, title, effectiveTimeNow)
 	errCheck(err, `creating todo`)
+	todoId, err := res.LastInsertId()
+	fmt.Printf("Added TODO: #%d %s (%s)\n", todoId, title, handle)
 }
 
-func todoDone(tx *sql.Tx, argv []string) {
+func todoDone(tx *sql.Tx, argv []string, handle string) {
 	if len(argv) != 1 {
-		log.Panic("missing or wrong parameter: NN (todo number)")
+		panic("missing or wrong parameter: NN (todo number)")
 	}
-	log.Panic("not implemented yet")
+	todoId, err := strconv.Atoi(argv[0])
+	errCheck(err, `converting number `+argv[0])
+	if todoId > 0 {
+		rows, err := txQuery(tx, `
+		 select todo_id, handle, title, creation_date
+		 from todo
+		 where done_date is null
+		 and todo_id = ?
+		 `, todoId)
+		errCheck(err, `selecting todo`)
+		defer rows.Close()
+
+		if rows.Next() {
+			var todoId int
+			var handle string
+			var title string
+			var creation_date time.Time
+			rows.Scan(&todoId, &handle, &title, &creation_date)
+			_, err = txExec(tx, `update todo set done_date =  ? where todo_id= ?`, effectiveTimeNow, todoId)
+			errCheck(err, `mark todo as done`)
+			fmt.Printf("Done TODO: #%d: %s (@%s)\n", todoId, title, handle)
+		} else {
+			panic(`no valid todo with this number`)
+		}
+	}
 }
 
-func showTodo(db *sql.DB, argv []string, handle string) {
-	rows, err := dbQuery(db, `select handle, title, creation_date
-	from todo
-	where handle = coalesce(?,handle)
-	and status='O' and done_date is null
-	order by creation_date asc`, handle)
+func todoUndo(tx *sql.Tx, argv []string, handle string) {
+	if len(argv) != 1 {
+		panic("missing or wrong parameter: NN (todo number)")
+	}
+	todoId, err := strconv.Atoi(argv[0])
+	errCheck(err, `converting number `+argv[0])
+	if todoId > 0 {
+		rows, err := txQuery(tx, `
+		 select todo_id, handle, title, creation_date
+		 from todo
+		 where done_date is not null
+		 and todo_id = ?
+		 `, todoId)
+		errCheck(err, `selecting todo`)
+		defer rows.Close()
+
+		if rows.Next() {
+			var todoId int
+			var handle string
+			var title string
+			var creation_date time.Time
+			rows.Scan(&todoId, &handle, &title, &creation_date)
+			_, err = txExec(tx, `update todo set done_date =  null where todo_id= ?`, todoId)
+			errCheck(err, `mark todo as undone`)
+			fmt.Printf("Undone TODO: #%d: %s (@%s)\n", todoId, title, handle)
+		} else {
+			panic(`no valid todo with this number`)
+		}
+	}
+}
+
+func showTodo(db *sql.DB, argv []string, handle string, limit int) {
+	// remember: sql has a problem with null date, so it is problematic with done_date
+	var rows *sql.Rows
+	var err error
+	if handle == "" {
+		rows, err = dbQuery(db, `select todo_id, handle, title, creation_date
+		from todo
+		where done_date is null
+		order by creation_date asc
+		limit ?`, limit)
+	} else {
+		rows, err = dbQuery(db, `select todo_id, handle, title, creation_date
+		from todo
+		where done_date is null
+		and handle = ?
+		order by creation_date asc
+		limit ?`, handle, limit)
+	}
 	errCheck(err, `selecting todos`)
 	defer rows.Close()
-	var cnt int = 0
+	//var cnt int = 0
 	for rows.Next() {
+		var todoId int
 		var handle string
 		var title string
 		var creation_date time.Time
-		rows.Scan(&handle, &title, &creation_date)
-		cnt++
-		fmt.Printf("%s #%02d %-40s\n", handle, cnt, title)
+		rows.Scan(&todoId, &handle, &title, &creation_date)
+		fmt.Printf("#%d %s (@%s)\n", todoId, title, handle)
 	}
 }
 
@@ -397,7 +475,7 @@ func parseDateTime(s string) *time.Time {
 	if s != "" {
 		p, err := time.ParseInLocation(orgDateTime, s, time.Local)
 		if err != nil {
-			log.Panicf("Could not parse %s with %s", s, orgDateTime)
+			panic(fmt.Errorf("Could not parse %s with %s", s, orgDateTime))
 		}
 		return &p
 	}
@@ -519,7 +597,7 @@ func loadOrgFile(clockfile string, c chan orgEntry) {
 
 func resetDb(tx *sql.Tx) {
 	if !*force {
-		log.Panic("You did not use 'force', aborting")
+		panic("You did not use 'force', aborting")
 	}
 	fmt.Println("Erasing all data")
 	_, err := txExec(tx, `delete from entries`)
@@ -640,7 +718,7 @@ func timeFrame(from, to *time.Time) string {
 }
 
 func running(db *sql.DB, argv []string, extra string) {
-	rows, err := dbQuery(db, `select e.start, h.header
+	rows, err := dbQuery(db, `select e.start, h.header, '@'||h.handle handle
 	from entries e
 	join headers h on h.header_id = e.header_id
 	where e.end is null`)
@@ -649,8 +727,9 @@ func running(db *sql.DB, argv []string, extra string) {
 	for rows.Next() {
 		var start time.Time
 		var header string
-		rows.Scan(&start, &header)
-		fmt.Printf("%s: %s%s\n", header, myDuration(effectiveTimeNow.Sub(start)), extra)
+		var handle string
+		rows.Scan(&start, &header, &handle)
+		fmt.Printf("%s: %s%s\n", handle, myDuration(effectiveTimeNow.Sub(start)), extra)
 	}
 }
 
@@ -693,7 +772,6 @@ and lower(header) like lower('%'||?||'%')
 and h.active=1
 order by sum_duration desc
 `, from, to, filter)
-
 	errCheck(err, `showing times`)
 	defer rows.Close()
 	total := time.Duration(0)
@@ -730,7 +808,6 @@ where lower(header) like lower('%'||?||'%')
 group by header, depth, start_date
 order by start_date asc
 `, from, to, filter)
-
 	errCheck(err, `showing date times`)
 	defer rows.Close()
 	total := time.Duration(0)
@@ -862,7 +939,7 @@ func main() {
 		fmt.Printf("Initialized: %s\n", clockdb)
 	case `head`:
 		showHeaders(db, argv)
-	case `sum`, `ls`, `show`:
+	case `sum`, `show`:
 		showTimes(db, argv)
 	case `day`, `days`:
 		showDays(db, argv)
@@ -871,6 +948,10 @@ func main() {
 	case `ru`, `running`:
 		running(db, argv, "")
 	case `pro`, `prompt`:
+		handle = verifyHandle(db, handle, true)
+		if handle != "" {
+			showTodo(db, argv, handle, 1)
+		}
 		running(db, argv, "\\n")
 	case `ll`:
 		listLogEntries(db, argv)
@@ -892,12 +973,17 @@ func main() {
 		tx = getTx(db)
 		handle = verifyHandle(db, handle, true)
 		addTodo(tx, argv, handle)
-	case `todo`:
+	case `todo`, `ls`:
 		handle = verifyHandle(db, handle, true)
-		showTodo(db, argv, handle)
+		showTodo(db, argv, handle, 9999)
 	case `done`:
+		handle = verifyHandle(db, handle, true)
 		tx = getTx(db)
-		todoDone(tx, argv)
+		todoDone(tx, argv, handle)
+	case `undo`:
+		handle = verifyHandle(db, handle, true)
+		tx = getTx(db)
+		todoUndo(tx, argv, handle)
 	case `import`:
 		tx = getTx(db)
 		resetDb(tx)
@@ -913,20 +999,22 @@ commands:
   init         initialize $CLOCKFILE.db
   import       imports an org-mode file (requires force)
   head         lists all active headers
-  sum/ls/show  lists and sums up headers time entries
+  sum/show     lists and sums up headers time entries
   print        prints all time entries in org-mode format
   ru[nning]    shows the currently running entry
-  pro[mpt]     shows the currently running entry with '\\n'
+  pro[mpt]     shows the currently running entry for bash PROMPT_COMMAND
   in <task>    check in (start timer) for task (also stops all other timers)
   out          check out (stops ALL timers)
-  mod          modifies open timer (requires -e)
 
+	## LOG handling
   log          add a log entry
   ll           show log entries
 
+	## TODO handling
   do {@h} xxx  adds a TODO
   todo {@h}    shows all TODOs for the current or specified handle
   done <nn>    marks a TODO as done
+  undo <nn>    marks a TODO as undone again
 
 You need to set the environment variable CLOCKFILE
 Optional parameters:`)
