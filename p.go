@@ -19,7 +19,7 @@ import (
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/sqlite"
 	// go get github.com/mattn/go-sqlite3
-	//_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var orgDateTime = "2006-01-02 Mon 15:04"
@@ -211,13 +211,36 @@ func openDB(dbfile string) *sql.DB {
 }
 
 type Header struct {
-	gorm.Model
-	//HeaderId int `gorm:"AUTO_INCREMENT"`
-	//HeaderId  int `gorm:"primary_key;AUTO_INCREMENT"`
-	Header string
-	Depth  int
-	Parent int
-	Active bool
+	//gorm.Model // contains ID, *At
+	HeaderID uint `gorm:"primary_key"`
+	Header   string
+	Handle   *string
+	Depth    int
+	Parent   *int
+	Active   bool
+	//CreatedAt  time.Time
+}
+
+/*
+FIX for "headers" vs headers problem (...?)
+
+alter table headers rename to headers_old;
+create table headers as select * from headers_old;
+drop table headers_old;
+alter table todo rename to todo_old;
+create table todo as select * from todo_old;
+drop table todo_old;
+*/
+
+type Entry struct {
+	//gorm.Model      // contains ID, *At
+	ID     uint `gorm:"primary_key"`
+	Header Header
+	Start  time.Time
+	End    *time.Time
+	//CreatedAt time.Time
+	//UpdatedAt time.Time
+	//DeletedAt *time.Time
 }
 
 func prepareDB(dbfile string) *sql.DB {
@@ -908,7 +931,10 @@ func main() {
 	dx, err := gorm.Open("sqlite3", "/tmp/test.db")
 	errCheck(err, `gorm failed`)
 	dx.LogMode(true)
-	dx.AutoMigrate(&Header{})
+	dx.AutoMigrate(&Header{}, &Entry{})
+	var h Header
+	dx.First(&h)
+	fmt.Printf("%v\n", h.Header)
 	defer dx.Close()
 
 	var tx *sql.Tx
