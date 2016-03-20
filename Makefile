@@ -1,4 +1,4 @@
-default: install
+default: linux
 
 install:
 	go install

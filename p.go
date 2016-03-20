@@ -243,6 +243,16 @@ type Entry struct {
 	//DeletedAt *time.Time
 }
 
+type Log struct {
+	//ID           uint `gorm:"primary_key"`
+	CreationDate time.Time
+	LogText      string
+}
+
+func (Log) TableName() string {
+	return "log"
+}
+
 func prepareDB(dbfile string) *sql.DB {
 	db := openDB(dbfile)
 	//NOTdefer db.Close()
@@ -931,7 +941,7 @@ func main() {
 	dx, err := gorm.Open("sqlite3", "/tmp/test.db")
 	errCheck(err, `gorm failed`)
 	dx.LogMode(true)
-	dx.AutoMigrate(&Header{}, &Entry{})
+	dx.AutoMigrate(&Header{}, &Entry{}, &Log{})
 	var h Header
 	dx.First(&h)
 	fmt.Printf("%v\n", h.Header)
