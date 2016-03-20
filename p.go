@@ -15,8 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	// go get -u github.com/jinzhu/gorm
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/sqlite"
 	// go get github.com/mattn/go-sqlite3
-	_ "github.com/mattn/go-sqlite3"
+	//_ "github.com/mattn/go-sqlite3"
 )
 
 var orgDateTime = "2006-01-02 Mon 15:04"
@@ -205,6 +208,16 @@ func openDB(dbfile string) *sql.DB {
 	db, err := sql.Open("sqlite3", dbfile)
 	errCheck(err, "Open database")
 	return db
+}
+
+type Header struct {
+	gorm.Model
+	//HeaderId int `gorm:"AUTO_INCREMENT"`
+	//HeaderId  int `gorm:"primary_key;AUTO_INCREMENT"`
+	Header string
+	Depth  int
+	Parent int
+	Active bool
 }
 
 func prepareDB(dbfile string) *sql.DB {
@@ -892,6 +905,12 @@ func listClock(data orgData, argv []string) orgData {
 }
 
 func main() {
+	dx, err := gorm.Open("sqlite3", "/tmp/test.db")
+	errCheck(err, `gorm failed`)
+	dx.LogMode(true)
+	dx.AutoMigrate(&Header{})
+	defer dx.Close()
+
 	var tx *sql.Tx
 	var db *sql.DB
 	defer func() {
