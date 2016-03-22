@@ -130,19 +130,22 @@ func findHeader(tx *gorm.DB, header string, handle string) (hdr *Header, err err
 	}
 }
 
-func addHeader(tx *gorm.DB, header string, parent RowId, depth int) RowId {
-	res, err := txExec(tx, `insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
-		header, parent, depth, effectiveTimeNow)
-	errCheck(err, `inserting header`)
-	rowid, err := res.LastInsertId()
-	fmt.Printf("Inserted %s\n", header)
-	return RowId(rowid)
+func addHeader(tx *gorm.DB, header string, parent *uint, depth int) uint {
+	h := Header{Header: header, Parent: parent, Depth: depth, CreationDate: effectiveTimeNow, Active: true}
+	tx.Create(&h)
+	return h.ID
+	//res, err := tx.DB.Exec(`insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
+	//header, parent, depth, effectiveTimeNow)
+	errCheck(tx.Error, `inserting header`)
+	//rowid, err := res.LastInsertId()
+	//fmt.Printf("Inserted %s\n", header)
+	return h.ID
 }
 
-func addTime(tx *gorm.DB, entry orgEntry, headerId RowId) {
-	_, err := txExec(tx, `insert into entries (header_id, start, end) values(?,?,?)`,
-		headerId, entry.start, entry.end)
-	errCheck(err, "inserting entry")
+func addTime(tx *gorm.DB, entry orgEntry, header Header) {
+	e := Entry{Header: header, Start: *entry.start, End: entry.end}
+	tx.Create(&e)
+	errCheck(tx.Error, "inserting entry")
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
 }
 
@@ -160,12 +163,13 @@ func addTime(tx *gorm.DB, entry orgEntry, headerId RowId) {
 type Header struct {
 	//gorm.Model // contains ID, *At
 	//HeaderID uint `gorm:"primary_key"`
-	ID     uint `gorm:"primary_key;column:header_id"`
-	Header string
-	Handle *string
-	Depth  int
-	Parent *int
-	Active bool
+	ID           uint `gorm:"primary_key;column:header_id"`
+	Header       string
+	Handle       *string
+	Depth        int
+	Parent       *uint
+	Active       bool
+	CreationDate time.Time
 }
 
 /*
@@ -216,17 +220,17 @@ func (Todo) TableName() string {
 	return "todo"
 }
 
-func closeAll(tx *sql.Tx) {
-	res, err := txExec(tx, `update entries set end=? where end is null`, effectiveTimeNow)
-	errCheck(err, `closing all end times`)
-	updatedCnt, err := res.RowsAffected()
-	errCheck(err, `closeAll RowsAffected`)
-	_ = updatedCnt
+func closeAll(tx *gorm.DB) {
+	updatedCnt := tx.Model(Entry{}).Where("end is null").Updates(Entry{End: &effectiveTimeNow}).RowsAffected
+	//res, err := txExec(tx, `update entries set end=? where end is null`, effectiveTimeNow)
+	errCheck(tx.Error, `closing all end times`)
+	//errCheck(err, `closeAll RowsAffected`)
 	if updatedCnt > 0 {
 		d("Closed entries: ", updatedCnt)
 	}
 }
 
+/* MAKE LATER
 func modifyOpen(tx *gorm.DB, argv []string) {
 	if *modifyEffectiveTime == 0 {
 		fmt.Fprintln(os.Stderr, `Modify requires an -m(odified) time!`)
@@ -255,13 +259,16 @@ func modifyOpen(tx *gorm.DB, argv []string) {
 		fmt.Printf(`Nothing open, maybe modify latest entry? [TODO]`)
 	}
 }
+*/
 
 func logEntry(tx *gorm.DB, argv []string) {
 	logString := strings.Join(argv, " ")
 	if logString != "" {
-		_, err := txExec(tx, `insert into log (creation_date, log_text) values (?,?)`,
-			effectiveTimeNow, strings.Join(argv, " "))
-		errCheck(err, `logging time`)
+		l := Log{CreationDate: effectiveTimeNow, LogText: logString}
+		db.Create(&l)
+		//_, err := txExec(tx, `insert into log (creation_date, log_text) values (?,?)`,
+		//effectiveTimeNow, strings.Join(argv, " "))
+		errCheck(db.Error, `logging time`)
 	}
 }
 
@@ -920,9 +927,9 @@ func main() {
 	case `out`:
 		tx = db.Begin()
 		closeAll(tx)
-	case `mod`:
-		tx = db.Begin()
-		modifyOpen(tx, argv)
+	//case `mod`:
+	//tx = db.Begin()
+	//modifyOpen(tx, argv)
 	case `log`:
 		tx = db.Begin()
 		logEntry(tx, argv)
