@@ -117,7 +117,7 @@ func findHeader(tx *gorm.DB, header string, handle string) (hdr *Header, err err
 		err = tx.Where("handle=?", handle).Find(&h).Error
 	} else {
 		d(`Find using part of title: `, header)
-		err = tx.Where("lower(header) like '%'||lower(?)||'%'", header).Find(&h).Error
+		err = tx.Where("lower(header) like '%'||lower(?)||'%'", header).Limit(2).Find(&h).Error
 	}
 	errCheck(err, `findHeader`)
 	switch len(h) {
@@ -275,32 +275,26 @@ func logEntry(tx *gorm.DB, argv []string) {
 func verifyHandle(handle string, fixit bool) string {
 	if handle == "" {
 		if fixit {
-			rows, err := dbQuery(db, `select h.handle
-			from entries e
-			join headers h on e.header_id = h.header_id
-			where e.end is null`)
-			errCheck(err, `fetch current handle`)
-			defer rows.Close()
-			if rows.Next() {
-				var h string
-				rows.Scan(&h)
-				return h
-			} else {
-				return ""
-			}
+			var e Entry
+			db.Where("end is null").First(&e).First(&e.Header)
+			errCheck(db.Error, `fetch current handle`)
+			return *e.Header.Handle
 		} else {
 			return ""
 		}
 	} else if handle == "*" {
 		return ""
 	}
-	rows, err := dbQuery(db, `select handle from headers where handle = ?`, handle)
-	errCheck(err, `checking handle`)
-	defer rows.Close()
-	if !rows.Next() {
+	var h Header
+	notFound := db.Where("handler = ?", handle).First(&h).RecordNotFound()
+	errCheck(db.Error, `checking handle`)
+
+	if notFound {
 		errCheck(errors.New("handle not found"), `handle check`)
+		return "" // never reached
+	} else {
+		return *h.Handle
 	}
-	return handle
 }
 
 func addTodo(tx *gorm.DB, argv []string, handle string) {
