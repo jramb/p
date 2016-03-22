@@ -19,8 +19,10 @@ import (
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/sqlite"
 	// go get github.com/mattn/go-sqlite3
-	_ "github.com/mattn/go-sqlite3"
+	//_ "github.com/mattn/go-sqlite3"
 )
+
+var db *gorm.DB
 
 var orgDateTime = "2006-01-02 Mon 15:04"
 var simpleDateFormat = `2006-01-02`
@@ -41,29 +43,6 @@ func d(args ...interface{}) {
 	if *debug {
 		log.Println(args...)
 	}
-}
-
-/*
-These are only to be able to log what is being executed
-*/
-func txQuery(tx *sql.Tx, query string, args ...interface{}) (*sql.Rows, error) {
-	d(`txQuery: `, query, args)
-	return tx.Query(query, args...)
-}
-
-func dbQuery(db *sql.DB, query string, args ...interface{}) (*sql.Rows, error) {
-	d(`txQuery: `, query, args)
-	return db.Query(query, args...)
-}
-
-func txExec(tx *sql.Tx, query string, args ...interface{}) (sql.Result, error) {
-	d(`txExec: `, query, args)
-	return tx.Exec(query, args...)
-}
-
-func dbExec(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
-	d(`dbExec: `, query, args)
-	return db.Exec(query, args...)
 }
 
 func (d myDuration) String() string {
@@ -130,59 +109,28 @@ func copyFileContents(src, dst string) (err error) {
 	return
 }
 
-func getParam(db *sql.DB, param string) string {
-	rows, err := dbQuery(db, `select value from params where param=?`, param)
-	errCheck(err, "selecting getParam")
-	defer rows.Close()
-	for rows.Next() {
-		var val string
-		rows.Scan(&val)
-		return val
-	}
-	return ""
-}
-
-func setParam(db *sql.DB, param string, value string) {
-	//log.Print(`in setParam`)
-	_, err := dbExec(db, `insert into params (param, value) values(?,?)`, param, value)
-	if err != nil {
-		_, err = dbExec(db, `update params set value = ? where param= ?`, value, param)
-		errCheck(err, `setParam`)
-	}
-}
-
-func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText string, err error) {
-	var rows *sql.Rows
+func findHeader(tx *gorm.DB, header string, handle string) (hdr *Header, err error) {
+	var h []Header
+	var hdrId int
 	if handle != "" {
 		d(`Find using handle: `, handle)
-		rows, err = txQuery(tx, `select rowid, header from headers
-		where handle = ?`, handle)
+		err = tx.Where("handle=?", handle).Find(&h).Error
 	} else {
 		d(`Find using part of title: `, header)
-		rows, err = txQuery(tx, `select rowid, header from headers
-		where lower(header) like '%'||lower(?)||'%'`, header)
+		err = tx.Where("lower(header) like '%'||lower(?)||'%'", header).Find(&h).Error
 	}
-	defer d(`done find header`)
 	errCheck(err, `findHeader`)
-	defer rows.Close()
-	var hdrId int
-	if rows.Next() {
-		rows.Scan(&hdrId, &headerText)
-		hdr = RowId(hdrId)
-	} else {
-		err = errors.New("Header '" + header + "' not found!")
-		hdr = RowId(0)
+	switch len(h) {
+	case 0:
+		return nil, errors.New("Header '" + header + "' not found!")
+	case 1:
+		return &h[0], nil
+	default:
+		return nil, errors.New("Too many matching headers: " + h[0].Header + ", " + h[1].Header)
 	}
-	if rows.Next() {
-		var anotherHeader string
-		rows.Scan(&hdrId, &anotherHeader)
-		err = errors.New("Too many matching headers: " + headerText + ", " + anotherHeader)
-		hdr = RowId(hdrId)
-	}
-	return
 }
 
-func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
+func addHeader(tx *gorm.DB, header string, parent RowId, depth int) RowId {
 	res, err := txExec(tx, `insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
 		header, parent, depth, effectiveTimeNow)
 	errCheck(err, `inserting header`)
@@ -191,58 +139,53 @@ func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
 	return RowId(rowid)
 }
 
-func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
+func addTime(tx *gorm.DB, entry orgEntry, headerId RowId) {
 	_, err := txExec(tx, `insert into entries (header_id, start, end) values(?,?,?)`,
 		headerId, entry.start, entry.end)
 	errCheck(err, "inserting entry")
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
 }
 
-func getTx(db *sql.DB) *sql.Tx {
-	tx, err := db.Begin()
-	errCheck(err, "begin transaction")
-	return tx
-}
-
-func openDB(dbfile string) *sql.DB {
-	db, err := sql.Open("sqlite3", dbfile)
-	errCheck(err, "Open database")
-	return db
-}
-
+/*
+ *_, err := dbExec(db, `create table if not exists headers
+ *( header_id integer primary key autoincrement
+ *, handle text
+ *, header text
+ *, depth int
+ *, parent integer
+ *, active boolean
+ *, creation_date datetime
+ *)`)
+ */
 type Header struct {
 	//gorm.Model // contains ID, *At
-	HeaderID uint `gorm:"primary_key"`
-	Header   string
-	Handle   *string
-	Depth    int
-	Parent   *int
-	Active   bool
-	//CreatedAt  time.Time
+	//HeaderID uint `gorm:"primary_key"`
+	ID     uint `gorm:"primary_key;column:header_id"`
+	Header string
+	Handle *string
+	Depth  int
+	Parent *int
+	Active bool
 }
 
 /*
-FIX for "headers" vs headers problem (...?)
-
-alter table headers rename to headers_old;
-create table headers as select * from headers_old;
-drop table headers_old;
-alter table todo rename to todo_old;
-create table todo as select * from todo_old;
-drop table todo_old;
-*/
-
+ *_, err = dbExec(db, `create table if not exists entries
+ *( header_id integer
+ *, start datetime not null
+ *, end datetime)`)
+ */
 type Entry struct {
 	//gorm.Model      // contains ID, *At
-	ID     uint `gorm:"primary_key"`
-	Header Header
+	//ID     uint `gorm:"primary_key;column_name "`
+	Header Header `gorm:"column:header_id"`
 	Start  time.Time
 	End    *time.Time
-	//CreatedAt time.Time
-	//UpdatedAt time.Time
-	//DeletedAt *time.Time
 }
 
+/*
+ *_, err = dbExec(db, `create table if not exists log
+ *( creation_date datetime, log_text text)`)
+ */
 type Log struct {
 	//ID           uint `gorm:"primary_key"`
 	CreationDate time.Time
@@ -253,56 +196,25 @@ func (Log) TableName() string {
 	return "log"
 }
 
-func prepareDB(dbfile string) *sql.DB {
-	db := openDB(dbfile)
-	//NOTdefer db.Close()
-	//fmt.Printf("database type: %T\n", db)
-	_, err := dbExec(db, `create table if not exists headers
-	( header_id integer primary key autoincrement
-	, handle text
-	, header text
-	, depth int
-	, parent integer
-	, active boolean
-	, creation_date datetime
-	)`)
-	errCheck(err, "create header table")
-	_, err = dbExec(db, `create table if not exists entries
-	( header_id integer
-	, start datetime not null
-	, end datetime)`)
-	errCheck(err, "create entries table")
-	_, err = dbExec(db, `create table if not exists log
-	( creation_date datetime, log_text text)`)
-	errCheck(err, "create log table")
-	_, err = dbExec(db, `create table if not exists params
-	(param text,value text,
-	primary key (param))`)
-	errCheck(err, "create params table")
-	_, err = dbExec(db, `create table if not exists todo
-	( todo_id integer primary key autoincrement
-	, title text not null
-	, handle text
-	, creation_date datetime not null
-  , done_date datetime)`)
-	errCheck(err, "create todo table")
-	setParam(db, "version", "4")
-	//log.Print(`version=` + getParam(db, `version`))
-	return db
+/*
+	 *_, err = dbExec(db, `create table if not exists todo
+	 *( todo_id integer primary key autoincrement
+	 *, title text not null
+	 *, handle text
+	 *, creation_date datetime not null
+   *, done_date datetime)`)
+*/
+type Todo struct {
+	ID           uint64 `gorm:"primary_key;column:todo_id"`
+	Title        string
+	Handle       string
+	CreationDate time.Time
+	DoneDate     *time.Time
 }
 
-/*
- *func closeClockEntry(e *orgEntry) {
- *  if e.lType != clock {
- *    log.Panicf("This is not a clock entry: %v", e)
- *  }
- *  if e.end == nil {
- *    modEnd := effectiveTimeNow
- *    e.end = &modEnd
- *    e.duration = e.end.Sub(*e.start)
- *  }
- *}
- */
+func (Todo) TableName() string {
+	return "todo"
+}
 
 func closeAll(tx *sql.Tx) {
 	res, err := txExec(tx, `update entries set end=? where end is null`, effectiveTimeNow)
@@ -315,7 +227,7 @@ func closeAll(tx *sql.Tx) {
 	}
 }
 
-func modifyOpen(tx *sql.Tx, argv []string) {
+func modifyOpen(tx *gorm.DB, argv []string) {
 	if *modifyEffectiveTime == 0 {
 		fmt.Fprintln(os.Stderr, `Modify requires an -m(odified) time!`)
 		return
@@ -344,7 +256,7 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 	}
 }
 
-func logEntry(tx *sql.Tx, argv []string) {
+func logEntry(tx *gorm.DB, argv []string) {
 	logString := strings.Join(argv, " ")
 	if logString != "" {
 		_, err := txExec(tx, `insert into log (creation_date, log_text) values (?,?)`,
@@ -353,7 +265,7 @@ func logEntry(tx *sql.Tx, argv []string) {
 	}
 }
 
-func verifyHandle(db *sql.DB, handle string, fixit bool) string {
+func verifyHandle(handle string, fixit bool) string {
 	if handle == "" {
 		if fixit {
 			rows, err := dbQuery(db, `select h.handle
@@ -384,7 +296,7 @@ func verifyHandle(db *sql.DB, handle string, fixit bool) string {
 	return handle
 }
 
-func addTodo(tx *sql.Tx, argv []string, handle string) {
+func addTodo(tx *gorm.DB, argv []string, handle string) {
 	title := strings.Join(argv, " ")
 	if len(argv) == 0 {
 		panic("missing parameter: {@handle} todo text")
@@ -399,7 +311,7 @@ func addTodo(tx *sql.Tx, argv []string, handle string) {
 	fmt.Printf("Added TODO: #%d %s (%s)\n", todoId, title, handle)
 }
 
-func todoDone(tx *sql.Tx, argv []string, handle string) {
+func todoDone(tx *gorm.DB, argv []string, handle string) {
 	if len(argv) != 1 {
 		panic("missing or wrong parameter: NN (todo number)")
 	}
@@ -430,7 +342,7 @@ func todoDone(tx *sql.Tx, argv []string, handle string) {
 	}
 }
 
-func todoUndo(tx *sql.Tx, argv []string, handle string) {
+func todoUndo(tx *gorm.DB, argv []string, handle string) {
 	if len(argv) != 1 {
 		panic("missing or wrong parameter: NN (todo number)")
 	}
@@ -461,7 +373,7 @@ func todoUndo(tx *sql.Tx, argv []string, handle string) {
 	}
 }
 
-func showTodo(db *sql.DB, argv []string, handle string, limit int) {
+func showTodo(argv []string, handle string, limit int) {
 	// remember: sql has a problem with null date, so it is problematic with done_date
 	var rows *sql.Rows
 	var err error
@@ -492,7 +404,7 @@ func showTodo(db *sql.DB, argv []string, handle string, limit int) {
 	}
 }
 
-func checkIn(tx *sql.Tx, argv []string, handle string) {
+func checkIn(tx *gorm.DB, argv []string, handle string) {
 	var header string
 
 	//fmt.Println(`checkIn`, argv, handle)
@@ -652,7 +564,7 @@ func resetDb(tx *sql.Tx) {
 	errCheck(err, `delete header`)
 }
 
-func importOrgData(tx *sql.Tx, clockfile string) {
+func importOrgData(tx *gorm.DB, clockfile string) {
 	headerStack := make([]RowId, 1, 10)
 	c := make(chan orgEntry)
 	go loadOrgFile(clockfile, c)
@@ -689,7 +601,7 @@ func loadTimeFile(clockfile string,
 	data = doer(data, argv)
 }
 
-func showHeaders(db *sql.DB, argv []string) {
+func showHeaders(argv []string) {
 	rows, err := dbQuery(db, `select rowid, header, depth from headers where active=1`)
 	errCheck(err, `Selecting headers`)
 	defer rows.Close()
@@ -763,7 +675,7 @@ func timeFrame(from, to *time.Time) string {
 	}
 }
 
-func running(db *sql.DB, argv []string, extra string) {
+func running(argv []string, extra string) {
 	rows, err := dbQuery(db, `select e.start, h.header, '@'||h.handle handle
 	from entries e
 	join headers h on h.header_id = e.header_id
@@ -779,7 +691,7 @@ func running(db *sql.DB, argv []string, extra string) {
 	}
 }
 
-func listLogEntries(db *sql.DB, argv []string) {
+func listLogEntries(argv []string) {
 	from, to := decodeTimeFrame(argv)
 	var filter string
 	if len(argv) > 1 {
@@ -800,7 +712,7 @@ and lower(log_text) like lower('%'||?||'%')
 	}
 }
 
-func showTimes(db *sql.DB, argv []string) {
+func showTimes(argv []string) {
 	from, to := decodeTimeFrame(argv)
 	var filter string
 	if len(argv) > 1 {
@@ -836,7 +748,7 @@ order by sum_duration desc
 	fmt.Printf("Total: %7s\n", myDuration(total))
 }
 
-func showDays(db *sql.DB, argv []string) {
+func showDays(argv []string) {
 	from, to := decodeTimeFrame(argv)
 	var filter string
 	if len(argv) > 1 {
@@ -873,7 +785,7 @@ order by start_date asc
 	fmt.Printf("     Total: %6s\n", myDuration(total))
 }
 
-func showOrg(db *sql.DB, argv []string) {
+func showOrg(argv []string) {
 	from, to := decodeTimeFrame(argv)
 	var filter string
 	if len(argv) > 1 {
@@ -938,23 +850,17 @@ func listClock(data orgData, argv []string) orgData {
 }
 
 func main() {
-	dx, err := gorm.Open("sqlite3", "/tmp/test.db")
-	errCheck(err, `gorm failed`)
-	dx.LogMode(true)
-	dx.AutoMigrate(&Header{}, &Entry{}, &Log{})
-	var h Header
-	dx.First(&h)
-	fmt.Printf("%v\n", h.Header)
-	defer dx.Close()
-
-	var tx *sql.Tx
-	var db *sql.DB
+	var tx *gorm.DB
 	defer func() {
 		if r := recover(); r != nil {
 			if tx != nil {
-				tx.Rollback()
+				db.Rollback()
 			}
 			fmt.Fprintln(os.Stderr, "Aborting: ", r)
+		} else {
+			if tx != nil {
+				tx.Commit()
+			}
 		}
 	}()
 
@@ -983,27 +889,28 @@ func main() {
 	clockdb := clockfile + `.db`
 	d(`Clockfile:`, clockdb)
 	//fmt.Println(clockfile)
-	if cmd == `init` {
-		db = prepareDB(clockdb)
-	} else {
-		db = openDB(clockdb)
-	}
+
+	db, err := gorm.Open("sqlite3", "/tmp/test.db")
+	errCheck(err, `Open database`)
 	defer db.Close()
+
 	switch cmd {
 	case `init`:
+		db.LogMode(true)
+		//DOESNOTWORKTOOGOODdx.AutoMigrate(&Header{}, &Entry{}, &Log{}, &Todo{})
 		fmt.Printf("Initialized: %s\n", clockdb)
 	case `head`:
-		showHeaders(db, argv)
+		showHeaders(argv)
 	case `sum`, `show`:
-		showTimes(db, argv)
+		showTimes(argv)
 	case `day`, `days`:
-		showDays(db, argv)
+		showDays(argv)
 	case `print`, `org`:
-		showOrg(db, argv)
+		showOrg(argv)
 	case `ru`, `running`:
-		running(db, argv, "")
+		running(argv, "")
 	case `pro`, `prompt`:
-		handle = verifyHandle(db, handle, true)
+		handle = verifyHandle(handle, true)
 		if handle != "" {
 			showTodo(db, argv, handle, 1)
 		}
@@ -1011,21 +918,21 @@ func main() {
 	case `ll`:
 		listLogEntries(db, argv)
 	case `out`:
-		tx = getTx(db)
+		tx = db.Begin()
 		closeAll(tx)
 	case `mod`:
-		tx = getTx(db)
+		tx = db.Begin()
 		modifyOpen(tx, argv)
 	case `log`:
-		tx = getTx(db)
+		tx = db.Begin()
 		logEntry(tx, argv)
 	case `in`:
-		tx = getTx(db)
+		tx = db.Begin()
 		handle = verifyHandle(db, handle, false)
 		closeAll(tx)
 		checkIn(tx, argv, handle)
 	case `do`:
-		tx = getTx(db)
+		tx = db.Begin()
 		handle = verifyHandle(db, handle, true)
 		addTodo(tx, argv, handle)
 	case `todo`, `ls`:
@@ -1033,14 +940,14 @@ func main() {
 		showTodo(db, argv, handle, 9999)
 	case `done`:
 		handle = verifyHandle(db, handle, true)
-		tx = getTx(db)
+		tx = db.Begin()
 		todoDone(tx, argv, handle)
 	case `undo`:
 		handle = verifyHandle(db, handle, true)
-		tx = getTx(db)
+		tx = db.Begin()
 		todoUndo(tx, argv, handle)
 	case `import`:
-		tx = getTx(db)
+		tx = db.Begin()
 		resetDb(tx)
 		//os.Remove(clockdb)
 		importOrgData(tx, argv[0])
@@ -1078,9 +985,5 @@ Optional parameters:`)
 		fmt.Fprintf(os.Stderr, "Handle (header shortcut): %s\n", handle)
 		fmt.Fprintln(os.Stderr, `
 -- Punch 2016 by jramb --`)
-	}
-
-	if tx != nil {
-		tx.Commit() // not using defer
 	}
 }
