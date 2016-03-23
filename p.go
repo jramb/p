@@ -110,7 +110,6 @@ func copyFileContents(src, dst string) (err error) {
 
 func findHeader(tx *gorm.DB, header string, handle string) (hdr *Header, err error) {
 	var h []Header
-	var hdrId int
 	if handle != "" {
 		d(`Find using handle: `, handle)
 		err = tx.Where("handle=?", handle).Find(&h).Error
@@ -129,16 +128,15 @@ func findHeader(tx *gorm.DB, header string, handle string) (hdr *Header, err err
 	}
 }
 
-func addHeader(tx *gorm.DB, header string, parent *uint, depth int) uint {
+func addHeader(tx *gorm.DB, header string, parent *uint, depth int) Header {
 	h := Header{Header: header, Parent: parent, Depth: depth, CreationDate: effectiveTimeNow, Active: true}
 	tx.Create(&h)
-	return h.ID
 	//res, err := tx.DB.Exec(`insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
 	//header, parent, depth, effectiveTimeNow)
 	errCheck(tx.Error, `inserting header`)
 	//rowid, err := res.LastInsertId()
 	//fmt.Printf("Inserted %s\n", header)
-	return h.ID
+	return h
 }
 
 func addTime(tx *gorm.DB, entry orgEntry, header Header) {
@@ -528,14 +526,14 @@ func resetDb(tx *gorm.DB) {
 }
 
 func importOrgData(tx *gorm.DB, clockfile string) {
-	headerStack := make([]uint, 1, 10)
+	headerStack := make([]*Header, 1, 10)
 	c := make(chan orgEntry)
 	go loadOrgFile(clockfile, c)
 	for entry := range c {
 		//fmt.Printf("len=%d, headerStack=%+v, dc=%d\n", len(headerStack), headerStack, entry.depthChange)
 		switch entry.depthChange {
 		case 1:
-			headerStack = append(headerStack, 0)
+			headerStack = append(headerStack, nil)
 		case 0:
 			_ = 0
 		default:
@@ -544,9 +542,10 @@ func importOrgData(tx *gorm.DB, clockfile string) {
 		//fmt.Printf("len=%d, headerStack=%+v", len(headerStack), headerStack)
 		switch entry.lType {
 		case header:
-			headerStack[len(headerStack)-1] = addHeader(tx, entry.header, &headerStack[len(headerStack)-2], entry.deep)
+			newHeader := addHeader(tx, entry.header, &headerStack[len(headerStack)-2].ID, entry.deep)
+			headerStack[len(headerStack)-1] = &newHeader
 		case clock:
-			addTime(tx, entry, &headerStack[len(headerStack)-1])
+			addTime(tx, entry, *headerStack[len(headerStack)-1])
 		}
 	}
 }
@@ -664,32 +663,37 @@ func showTimes(argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := dbQuery(db, `
-select rowid, header, depth,
+	type Result struct {
+		ID          uint
+		Header      string
+		Depth       uint
+		SumDuration int64
+	}
+	var rs []Result
+	db.Raw(`
+select rowid id, header, depth,
   (select sum(strftime('%s',end)-strftime('%s',start)) sum_duration
 	from entries e
 	where e.header_id = h.header_id
-  and start between ? and ?) sum_duration
+  and start between ? and ?
+) sum_duration
 from headers h
 where sum_duration is not null
-and lower(header) like lower('%'||?||'%')
+and lower(header) like '%'||lower(?)||'%'
 and h.active=1
 order by sum_duration desc
-`, from, to, filter)
-	errCheck(err, `showing times`)
-	defer rows.Close()
+`, from, to, filter).Scan(&rs)
+	errCheck(db.Error, `showing times`)
+	fmt.Printf("rs=%v\n", rs)
+	d("Size of rs=" + string(len(rs)))
+
 	total := time.Duration(0)
 
 	fmt.Printf(timeFrame(&from, &to))
-	for rows.Next() {
-		var id int
-		var head string
-		var depth int
-		var duration int64
-		rows.Scan(&id, &head, &depth, &duration)
-		dur := time.Duration(duration * 1000000000)
+	for _, r := range rs {
+		dur := time.Duration(r.SumDuration * 1000000000)
 		total += dur
-		fmt.Printf("%14s %s\n", myDuration(dur), head)
+		fmt.Printf("%14s %s\n", myDuration(dur), r.Header)
 	}
 	fmt.Printf("Total: %7s\n", myDuration(total))
 }
@@ -700,33 +704,33 @@ func showDays(argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := dbQuery(db, `
+	type Result struct {
+		StartDate   string
+		Header      string
+		Depth       uint
+		SumDuration int64
+	}
+	var rs []Result
+	db.Raw(`
 with b as (select h.header, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
 where e.end is not null
 and e.start between ? and ?)
-select start_date, header, depth, sum(duration)
+select start_date, header, depth, sum(duration) sum_duration
 from b
 where lower(header) like lower('%'||?||'%')
 group by header, depth, start_date
 order by start_date asc
-`, from, to, filter)
-	errCheck(err, `showing date times`)
-	defer rows.Close()
-	total := time.Duration(0)
+`, from, to, filter).Scan(&rs)
+	errCheck(db.Error, `showing date times`)
 
+	total := time.Duration(0)
 	fmt.Printf(timeFrame(&from, &to))
-	for rows.Next() {
-		var start string
-		var head string
-		var depth int
-		var duration int64
-		// FIXME
-		rows.Scan(&start, &head, &depth, &duration)
-		dur := time.Duration(duration * 1000000000)
+	for _, r := range rs {
+		dur := time.Duration(r.SumDuration * 1000000000)
 		total += dur
-		fmt.Printf("%s: %6s %s\n", start, myDuration(dur), head)
+		fmt.Printf("%s: %6s %s\n", r.StartDate, myDuration(dur), r.Header)
 	}
 	fmt.Printf("     Total: %6s\n", myDuration(total))
 }
@@ -737,49 +741,44 @@ func showOrg(argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	hdrs, err := dbQuery(db, `select header_id, header, depth
-	from headers
-	where active=1
-	and lower(header) like lower('%'||?||'%')`, filter)
-	errCheck(err, `fetching headers`)
-	defer hdrs.Close()
-	for hdrs.Next() {
-		var hid int
-		var headerTxt string
-		var depth int
-		hdrs.Scan(&hid, &headerTxt, &depth)
+	var hs []Header
+	db.Where("active=1").Where("lower(header) like '%'||lower(?)||'%'", filter).Find(&hs)
+	errCheck(db.Error, `fetching headers`)
+
+	for _, h := range hs {
 		headEntry := orgEntry{
 			lType:  header,
-			deep:   depth,
-			header: headerTxt,
+			deep:   h.Depth,
+			header: h.Header,
 		}
-		entr, err := dbQuery(db, `select start, end, strftime('%s',end)-strftime('%s',start) duration
+		type Result struct {
+			Start    time.Time
+			End      time.Time
+			Duration int64
+		}
+		var rs []Result
+		db.Raw(`select start, end, strftime('%s',end)-strftime('%s',start) duration
 		from entries
 		where header_id = ?
 		and start between ? and ?
-		order by start desc`, hid, from, to)
-		errCheck(err, `Fetching entries for `+string(hid)+` = `+headerTxt)
+		order by start desc`, h.ID, from, to).Scan(&rs)
+		errCheck(db.Error, `Fetching entries for `+string(h.ID)+` = `+h.Header)
 		first := true
 		fmt.Printf("%s\n", headEntry)
-		for entr.Next() {
+		for _, r := range rs {
 			if first {
 				//fmt.Printf("%s\n", headEntry)
 				first = false
 			}
-			var start time.Time
-			var end time.Time
-			var dur int64
-			entr.Scan(&start, &end, &dur)
 			clockEntry := orgEntry{
 				lType:    clock,
-				start:    &start,
-				end:      &end,
-				duration: time.Duration(dur * 1000000000),
-				deep:     depth,
+				start:    &r.Start,
+				end:      &r.End,
+				duration: time.Duration(r.Duration * 1000000000),
+				deep:     h.Depth,
 			}
 			fmt.Printf("%s\n", clockEntry)
 		}
-		entr.Close()
 	}
 }
 func listClock(data orgData, argv []string) orgData {
@@ -798,16 +797,16 @@ func listClock(data orgData, argv []string) orgData {
 func main() {
 	var tx *gorm.DB
 	defer func() {
-		if r := recover(); r != nil {
-			if tx != nil {
-				db.Rollback()
-			}
-			fmt.Fprintln(os.Stderr, "Aborting: ", r)
-		} else {
-			if tx != nil {
-				tx.Commit()
-			}
+		//if r := recover(); r != nil {
+		//if tx != nil {
+		//db.Rollback()
+		//}
+		//fmt.Fprintln(os.Stderr, "Aborting: ", r)
+		//} else {
+		if tx != nil {
+			tx.Commit()
 		}
+		//}
 	}()
 
 	flag.Parse()
@@ -836,9 +835,11 @@ func main() {
 	d(`Clockfile:`, clockdb)
 	//fmt.Println(clockfile)
 
-	db, err := gorm.Open("sqlite3", "/tmp/test.db")
+	var err error
+	db, err = gorm.Open("sqlite3", "/tmp/test.db")
 	errCheck(err, `Open database`)
 	defer db.Close()
+	db.LogMode(true) // FIXME: change to *debug
 
 	switch cmd {
 	case `init`:
@@ -858,11 +859,11 @@ func main() {
 	case `pro`, `prompt`:
 		handle = verifyHandle(handle, true)
 		if handle != "" {
-			showTodo(db, argv, handle, 1)
+			showTodo(argv, handle, 1)
 		}
-		running(db, argv, "\\n")
+		running(argv, "\\n")
 	case `ll`:
-		listLogEntries(db, argv)
+		listLogEntries(argv)
 	case `out`:
 		tx = db.Begin()
 		closeAll(tx)
@@ -874,22 +875,22 @@ func main() {
 		logEntry(tx, argv)
 	case `in`:
 		tx = db.Begin()
-		handle = verifyHandle(db, handle, false)
+		handle = verifyHandle(handle, false)
 		closeAll(tx)
 		checkIn(tx, argv, handle)
 	case `do`:
 		tx = db.Begin()
-		handle = verifyHandle(db, handle, true)
+		handle = verifyHandle(handle, true)
 		addTodo(tx, argv, handle)
 	case `todo`, `ls`:
-		handle = verifyHandle(db, handle, true)
-		showTodo(db, argv, handle, 9999)
+		handle = verifyHandle(handle, true)
+		showTodo(argv, handle, 9999)
 	case `done`:
-		handle = verifyHandle(db, handle, true)
+		handle = verifyHandle(handle, true)
 		tx = db.Begin()
 		todoDone(tx, argv, handle)
 	case `undo`:
-		handle = verifyHandle(db, handle, true)
+		handle = verifyHandle(handle, true)
 		tx = db.Begin()
 		todoUndo(tx, argv, handle)
 	case `import`:
