@@ -4,7 +4,7 @@ package main
 
 import (
 	"bufio"
-	"database/sql"
+	//"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,7 +35,6 @@ var debug = flag.Bool("d", false, "debug")
 var all = flag.Bool("a", false, "show all")
 
 type lineType int
-type RowId int64
 
 type myDuration time.Duration
 
@@ -305,11 +304,11 @@ func addTodo(tx *gorm.DB, argv []string, handle string) {
 	if handle == "" {
 		panic("missing handle, TODOs need a handle")
 	}
-	res, err := txExec(tx, `insert into todo(handle,title,creation_date) values(?,?,?)`,
-		handle, title, effectiveTimeNow)
-	errCheck(err, `creating todo`)
-	todoId, err := res.LastInsertId()
-	fmt.Printf("Added TODO: #%d %s (%s)\n", todoId, title, handle)
+	var t = Todo{Handle: handle, Title: title, CreationDate: effectiveTimeNow}
+	tx.Create(&t)
+	errCheck(tx.Error, `creating todo`)
+
+	fmt.Printf("Added TODO: #%d %s (@%s)\n", t.ID, t.Title, t.Handle)
 }
 
 func todoDone(tx *gorm.DB, argv []string, handle string) {
@@ -319,24 +318,15 @@ func todoDone(tx *gorm.DB, argv []string, handle string) {
 	todoId, err := strconv.Atoi(argv[0])
 	errCheck(err, `converting number `+argv[0])
 	if todoId > 0 {
-		rows, err := txQuery(tx, `
-		 select todo_id, handle, title, creation_date
-		 from todo
-		 where done_date is null
-		 and todo_id = ?
-		 `, todoId)
-		errCheck(err, `selecting todo`)
-		defer rows.Close()
+		var t Todo
+		notFound := tx.Where("done_date is null").Where("todo_id=?", todoId).First(&t).RecordNotFound()
+		errCheck(tx.Error, `selecting todo`)
 
-		if rows.Next() {
-			var todoId int
-			var handle string
-			var title string
-			var creation_date time.Time
-			rows.Scan(&todoId, &handle, &title, &creation_date)
-			_, err = txExec(tx, `update todo set done_date =  ? where todo_id= ?`, effectiveTimeNow, todoId)
-			errCheck(err, `mark todo as done`)
-			fmt.Printf("Done TODO: #%d: %s (@%s)\n", todoId, title, handle)
+		if !notFound {
+			t.DoneDate = &effectiveTimeNow
+			tx.Update(&t)
+			errCheck(tx.Error, `mark todo as done`)
+			fmt.Printf("Done TODO: #%d: %s (@%s)\n", t.ID, t.Title, t.Handle)
 		} else {
 			panic(`no valid todo with this number`)
 		}
@@ -350,24 +340,14 @@ func todoUndo(tx *gorm.DB, argv []string, handle string) {
 	todoId, err := strconv.Atoi(argv[0])
 	errCheck(err, `converting number `+argv[0])
 	if todoId > 0 {
-		rows, err := txQuery(tx, `
-		 select todo_id, handle, title, creation_date
-		 from todo
-		 where done_date is not null
-		 and todo_id = ?
-		 `, todoId)
-		errCheck(err, `selecting todo`)
-		defer rows.Close()
-
-		if rows.Next() {
-			var todoId int
-			var handle string
-			var title string
-			var creation_date time.Time
-			rows.Scan(&todoId, &handle, &title, &creation_date)
-			_, err = txExec(tx, `update todo set done_date =  null where todo_id= ?`, todoId)
-			errCheck(err, `mark todo as undone`)
-			fmt.Printf("Undone TODO: #%d: %s (@%s)\n", todoId, title, handle)
+		t := Todo{ID: uint64(todoId)}
+		notFound := tx.First(&t).RecordNotFound()
+		errCheck(tx.Error, `selecting todo`)
+		if !notFound {
+			t.DoneDate = nil
+			tx.Save(&t)
+			errCheck(tx.Error, `mark todo as undone`)
+			fmt.Printf("Undone TODO: #%d: %s (@%s)\n", t.ID, t.Title, t.Handle)
 		} else {
 			panic(`no valid todo with this number`)
 		}
@@ -375,33 +355,15 @@ func todoUndo(tx *gorm.DB, argv []string, handle string) {
 }
 
 func showTodo(argv []string, handle string, limit int) {
-	// remember: sql has a problem with null date, so it is problematic with done_date
-	var rows *sql.Rows
-	var err error
+	var ts []Todo
+	db2 := db.Where("done_date is null")
 	if handle == "" {
-		rows, err = dbQuery(db, `select todo_id, handle, title, creation_date
-		from todo
-		where done_date is null
-		order by creation_date asc
-		limit ?`, limit)
-	} else {
-		rows, err = dbQuery(db, `select todo_id, handle, title, creation_date
-		from todo
-		where done_date is null
-		and handle = ?
-		order by creation_date asc
-		limit ?`, handle, limit)
+		db2 = db2.Where("handle=?", handle)
 	}
-	errCheck(err, `selecting todos`)
-	defer rows.Close()
-	//var cnt int = 0
-	for rows.Next() {
-		var todoId int
-		var handle string
-		var title string
-		var creation_date time.Time
-		rows.Scan(&todoId, &handle, &title, &creation_date)
-		fmt.Printf("#%d %s (@%s)\n", todoId, title, handle)
+	db2 = db2.Limit(limit).Order("creation_date asc").Find(&ts)
+	errCheck(db2.Error, `selecting todos`)
+	for _, t := range ts {
+		fmt.Printf("#%d %s (@%s)\n", t.ID, t.Title, t.Handle)
 	}
 }
 
@@ -416,7 +378,8 @@ func checkIn(tx *gorm.DB, argv []string, handle string) {
 		header = argv[0]
 	}
 	//log.Println("header to check into: " + header)
-	hdr, headerText, err := findHeader(tx, header, handle)
+	var hdr *Header
+	hdr, err := findHeader(tx, header, handle)
 	errCheck(err, `checkIn`)
 
 	entry := orgEntry{
@@ -426,8 +389,8 @@ func checkIn(tx *gorm.DB, argv []string, handle string) {
 		//duration    time.Duration
 		//depthChange int
 	}
-	addTime(tx, entry, hdr)
-	fmt.Printf("Checked into %s\n", headerText)
+	addTime(tx, entry, *hdr)
+	fmt.Printf("Checked into %s\n", hdr.Header)
 }
 
 func parseDateTime(s string) *time.Time {
@@ -554,26 +517,25 @@ func loadOrgFile(clockfile string, c chan orgEntry) {
 	}
 }
 
-func resetDb(tx *sql.Tx) {
+func resetDb(tx *gorm.DB) {
 	if !*force {
 		panic("You did not use 'force', aborting")
 	}
 	fmt.Println("Erasing all data")
-	_, err := txExec(tx, `delete from entries`)
-	errCheck(err, `delete entries`)
-	_, err = txExec(tx, `delete from headers`)
-	errCheck(err, `delete header`)
+	tx.Delete(Entry{})  // DANGER, this deletes ALL enties!
+	tx.Delete(Header{}) // DANGER, delete all headers
+	errCheck(tx.Error, `delete entries and headers`)
 }
 
 func importOrgData(tx *gorm.DB, clockfile string) {
-	headerStack := make([]RowId, 1, 10)
+	headerStack := make([]uint, 1, 10)
 	c := make(chan orgEntry)
 	go loadOrgFile(clockfile, c)
 	for entry := range c {
 		//fmt.Printf("len=%d, headerStack=%+v, dc=%d\n", len(headerStack), headerStack, entry.depthChange)
 		switch entry.depthChange {
 		case 1:
-			headerStack = append(headerStack, RowId(0))
+			headerStack = append(headerStack, 0)
 		case 0:
 			_ = 0
 		default:
@@ -582,9 +544,9 @@ func importOrgData(tx *gorm.DB, clockfile string) {
 		//fmt.Printf("len=%d, headerStack=%+v", len(headerStack), headerStack)
 		switch entry.lType {
 		case header:
-			headerStack[len(headerStack)-1] = addHeader(tx, entry.header, headerStack[len(headerStack)-2], entry.deep)
+			headerStack[len(headerStack)-1] = addHeader(tx, entry.header, &headerStack[len(headerStack)-2], entry.deep)
 		case clock:
-			addTime(tx, entry, headerStack[len(headerStack)-1])
+			addTime(tx, entry, &headerStack[len(headerStack)-1])
 		}
 	}
 }
@@ -603,15 +565,11 @@ func loadTimeFile(clockfile string,
 }
 
 func showHeaders(argv []string) {
-	rows, err := dbQuery(db, `select rowid, header, depth from headers where active=1`)
-	errCheck(err, `Selecting headers`)
-	defer rows.Close()
-	for rows.Next() {
-		var id int
-		var head string
-		var depth int
-		rows.Scan(&id, &head, &depth)
-		fmt.Printf("[%2d] %s %s\n", id, strings.Repeat("   ", depth-1), head)
+	var hs []Header
+	db.Where("active=1").Find(&hs)
+	errCheck(db.Error, `Selecting headers`)
+	for _, h := range hs {
+		fmt.Printf("[%2d] %s %s\n", h.ID, strings.Repeat("   ", h.Depth-1), h.Header)
 	}
 }
 
@@ -677,18 +635,12 @@ func timeFrame(from, to *time.Time) string {
 }
 
 func running(argv []string, extra string) {
-	rows, err := dbQuery(db, `select e.start, h.header, '@'||h.handle handle
-	from entries e
-	join headers h on h.header_id = e.header_id
-	where e.end is null`)
-	errCheck(err, `selecting running`)
-	defer rows.Close()
-	for rows.Next() {
-		var start time.Time
-		var header string
-		var handle string
-		rows.Scan(&start, &header, &handle)
-		fmt.Printf("%s: %s%s\n", handle, myDuration(effectiveTimeNow.Sub(start)), extra)
+	var es []Entry
+	db.Where("end is null").Find(&es)
+	errCheck(db.Error, `selecting running`)
+	for _, e := range es {
+		db.Find(&e.Header)
+		fmt.Printf("@%s: %s%s\n", e.Header.Handle, myDuration(effectiveTimeNow.Sub(e.Start)), extra)
 	}
 }
 
@@ -698,18 +650,11 @@ func listLogEntries(argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := dbQuery(db, `
-select log_text, creation_date from log
-where creation_date between ? and ?
-and lower(log_text) like lower('%'||?||'%')
-`, from, to, filter)
-	errCheck(err, `selecting log entries`)
-	defer rows.Close()
-	for rows.Next() {
-		var txt string
-		var logTime time.Time
-		rows.Scan(&txt, &logTime)
-		fmt.Printf("%s: %s\n", simpleDate(logTime), txt)
+	var ls []Log
+	db.Where("creation_date between ? and ?", from, to).Where("lower(log_text) like '%'||lower(?)||'%'", filter).Find(&ls)
+	errCheck(db.Error, `selecting log entries`)
+	for _, l := range ls {
+		fmt.Printf("%s: %s\n", simpleDate(l.CreationDate), l.LogText)
 	}
 }
 
