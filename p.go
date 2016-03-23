@@ -350,7 +350,7 @@ func addTodo(tx *sql.Tx, argv []string, handle string) {
 		handle, title, effectiveTimeNow)
 	errCheck(err, `creating todo`)
 	todoId, err := res.LastInsertId()
-	fmt.Printf("Added TODO: #%d %s (%s)\n", todoId, title, handle)
+	fmt.Printf("Added TODO: #%d %s (@%s)\n", todoId, title, handle)
 }
 
 func todoDone(tx *sql.Tx, argv []string, handle string) {
@@ -718,7 +718,7 @@ func timeFrame(from, to *time.Time) string {
 }
 
 func running(db *sql.DB, argv []string, extra string) {
-	rows, err := dbQuery(db, `select e.start, h.header, '@'||h.handle handle
+	rows, err := dbQuery(db, `select e.start, h.header, h.handle
 	from entries e
 	join headers h on h.header_id = e.header_id
 	where e.end is null`)
@@ -729,7 +729,11 @@ func running(db *sql.DB, argv []string, extra string) {
 		var header string
 		var handle string
 		rows.Scan(&start, &header, &handle)
-		fmt.Printf("%s: %s%s\n", handle, myDuration(effectiveTimeNow.Sub(start)), extra)
+		if handle != "" {
+			fmt.Printf("@%s: %s%s\n", handle, myDuration(effectiveTimeNow.Sub(start)), extra)
+		} else {
+			fmt.Printf("%s: %s%s\n", header, myDuration(effectiveTimeNow.Sub(start)), extra)
+		}
 	}
 }
 
