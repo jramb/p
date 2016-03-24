@@ -9,7 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	//"log"
 	"os"
 	"regexp"
 	"strconv"
@@ -17,6 +17,7 @@ import (
 	"time"
 	// go get github.com/mattn/go-sqlite3
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/ttacon/chalk"
 )
 
 var orgDateTime = "2006-01-02 Mon 15:04"
@@ -36,31 +37,35 @@ type myDuration time.Duration
 
 func d(args ...interface{}) {
 	if *debug {
-		log.Println(args...)
+		//log.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
+		fmt.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
 	}
+}
+
+func dbDebug(action string, elapsed time.Duration, query string, args ...interface{}) {
+	d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Cyan.Color(query), " ", chalk.Red, args, chalk.Reset)
 }
 
 /*
 These are only to be able to log what is being executed
 */
-func txQuery(tx *sql.Tx, query string, args ...interface{}) (*sql.Rows, error) {
-	d(`txQuery: `, query, args)
-	return tx.Query(query, args...)
+
+func dbQ(dbF func(string, ...interface{}) (*sql.Rows, error), query string, args ...interface{}) *sql.Rows {
+	start := time.Now()
+	res, err := dbF(query, args...)
+	errCheck(err, query)
+	elapsed := time.Since(start)
+	dbDebug("db", elapsed, query, args)
+	return res
 }
 
-func dbQuery(db *sql.DB, query string, args ...interface{}) (*sql.Rows, error) {
-	d(`txQuery: `, query, args)
-	return db.Query(query, args...)
-}
-
-func txExec(tx *sql.Tx, query string, args ...interface{}) (sql.Result, error) {
-	d(`txExec: `, query, args)
-	return tx.Exec(query, args...)
-}
-
-func dbExec(db *sql.DB, query string, args ...interface{}) (sql.Result, error) {
-	d(`dbExec: `, query, args)
-	return db.Exec(query, args...)
+func dbX(dbF func(string, ...interface{}) (sql.Result, error), query string, args ...interface{}) sql.Result {
+	start := time.Now()
+	res, err := dbF(query, args...)
+	errCheck(err, query)
+	elapsed := time.Since(start)
+	dbDebug("db", elapsed, query, args)
+	return res
 }
 
 func (d myDuration) String() string {
@@ -128,8 +133,7 @@ func copyFileContents(src, dst string) (err error) {
 }
 
 func getParam(db *sql.DB, param string) string {
-	rows, err := dbQuery(db, `select value from params where param=?`, param)
-	errCheck(err, "selecting getParam")
+	rows := dbQ(db.Query, `select value from params where param=?`, param)
 	defer rows.Close()
 	for rows.Next() {
 		var val string
@@ -141,22 +145,20 @@ func getParam(db *sql.DB, param string) string {
 
 func setParam(db *sql.DB, param string, value string) {
 	//log.Print(`in setParam`)
-	_, err := dbExec(db, `insert into params (param, value) values(?,?)`, param, value)
-	if err != nil {
-		_, err = dbExec(db, `update params set value = ? where param= ?`, value, param)
-		errCheck(err, `setParam`)
-	}
+	//_ := dbX(db.Exec, `insert into params (param, value) values(?,?)`, param, value)
+	//if err != nil {
+	_ = dbX(db.Exec, `update params set value = ? where param= ?`, value, param)
 }
 
 func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText string, err error) {
 	var rows *sql.Rows
 	if handle != "" {
 		d(`Find using handle: `, handle)
-		rows, err = txQuery(tx, `select rowid, header from headers
+		rows = dbQ(tx.Query, `select rowid, header from headers
 		where handle = ?`, handle)
 	} else {
 		d(`Find using part of title: `, header)
-		rows, err = txQuery(tx, `select rowid, header from headers
+		rows = dbQ(tx.Query, `select rowid, header from headers
 		where lower(header) like '%'||lower(?)||'%'`, header)
 	}
 	defer d(`done find header`)
@@ -180,18 +182,17 @@ func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText
 }
 
 func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
-	res, err := txExec(tx, `insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
+	res := dbX(tx.Exec, `insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
 		header, parent, depth, effectiveTimeNow)
-	errCheck(err, `inserting header`)
 	rowid, err := res.LastInsertId()
+	errCheck(err, `finding LastInsertId`)
 	fmt.Printf("Inserted %s\n", header)
 	return RowId(rowid)
 }
 
 func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
-	_, err := txExec(tx, `insert into entries (header_id, start, end) values(?,?,?)`,
+	_ = dbX(tx.Exec, `insert into entries (header_id, start, end) values(?,?,?)`,
 		headerId, entry.start, entry.end)
-	errCheck(err, "inserting entry")
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
 }
 
@@ -211,7 +212,7 @@ func prepareDB(dbfile string) *sql.DB {
 	db := openDB(dbfile)
 	//NOTdefer db.Close()
 	//fmt.Printf("database type: %T\n", db)
-	_, err := dbExec(db, `create table if not exists headers
+	_ = dbX(db.Exec, `create table if not exists headers
 	( header_id integer primary key autoincrement
 	, handle text
 	, header text
@@ -220,26 +221,21 @@ func prepareDB(dbfile string) *sql.DB {
 	, active boolean
 	, creation_date datetime
 	)`)
-	errCheck(err, "create header table")
-	_, err = dbExec(db, `create table if not exists entries
+	_ = dbX(db.Exec, `create table if not exists entries
 	( header_id integer
 	, start datetime not null
 	, end datetime)`)
-	errCheck(err, "create entries table")
-	_, err = dbExec(db, `create table if not exists log
+	_ = dbX(db.Exec, `create table if not exists log
 	( creation_date datetime, log_text text)`)
-	errCheck(err, "create log table")
-	_, err = dbExec(db, `create table if not exists params
+	_ = dbX(db.Exec, `create table if not exists params
 	(param text,value text,
 	primary key (param))`)
-	errCheck(err, "create params table")
-	_, err = dbExec(db, `create table if not exists todo
+	_ = dbX(db.Exec, `create table if not exists todo
 	( todo_id integer primary key autoincrement
 	, title text not null
 	, handle text
 	, creation_date datetime not null
   , done_date datetime)`)
-	errCheck(err, "create todo table")
 	setParam(db, "version", "4")
 	//log.Print(`version=` + getParam(db, `version`))
 	return db
@@ -259,10 +255,9 @@ func prepareDB(dbfile string) *sql.DB {
  */
 
 func closeAll(tx *sql.Tx) {
-	res, err := txExec(tx, `update entries set end=? where end is null`, effectiveTimeNow)
-	errCheck(err, `closing all end times`)
+	res := dbX(tx.Exec, `update entries set end=? where end is null`, effectiveTimeNow)
 	updatedCnt, err := res.RowsAffected()
-	errCheck(err, `closeAll RowsAffected`)
+	errCheck(err, `fetching RowsAffected`)
 	_ = updatedCnt
 	if updatedCnt > 0 {
 		d("Closed entries: ", updatedCnt)
@@ -279,8 +274,7 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 		return
 	}
 
-	rows, err := txQuery(tx, `select start, rowid from entries where end is null`)
-	errCheck(err, `getting open entries`)
+	rows := dbQ(tx.Query, `select start, rowid from entries where end is null`)
 	defer rows.Close()
 	var cnt int = 0
 	for rows.Next() {
@@ -290,8 +284,7 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 		rows.Scan(&start, &rowid)
 		newStart := start.Add(-*modifyEffectiveTime)
 		fmt.Printf("New start: %s (added %s)\n", newStart.Format(timeFormat), *modifyEffectiveTime)
-		_, err := txExec(tx, `update entries set start=? where rowid = ?`, newStart, rowid)
-		errCheck(err, `modifying entry`)
+		_ = dbX(tx.Exec, `update entries set start=? where rowid = ?`, newStart, rowid)
 	}
 	if cnt == 0 {
 		fmt.Printf(`Nothing open, maybe modify latest entry? [TODO]`)
@@ -301,20 +294,18 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 func logEntry(tx *sql.Tx, argv []string) {
 	logString := strings.Join(argv, " ")
 	if logString != "" {
-		_, err := txExec(tx, `insert into log (creation_date, log_text) values (?,?)`,
+		_ = dbX(tx.Exec, `insert into log (creation_date, log_text) values (?,?)`,
 			effectiveTimeNow, strings.Join(argv, " "))
-		errCheck(err, `logging time`)
 	}
 }
 
 func verifyHandle(db *sql.DB, handle string, fixit bool) string {
 	if handle == "" {
 		if fixit {
-			rows, err := dbQuery(db, `select h.handle
+			rows := dbQ(db.Query, `select h.handle
 			from entries e
 			join headers h on e.header_id = h.header_id
 			where e.end is null`)
-			errCheck(err, `fetch current handle`)
 			defer rows.Close()
 			if rows.Next() {
 				var h string
@@ -329,8 +320,7 @@ func verifyHandle(db *sql.DB, handle string, fixit bool) string {
 	} else if handle == "*" {
 		return ""
 	}
-	rows, err := dbQuery(db, `select handle from headers where handle = ?`, handle)
-	errCheck(err, `checking handle`)
+	rows := dbQ(db.Query, `select handle from headers where handle = ?`, handle)
 	defer rows.Close()
 	if !rows.Next() {
 		errCheck(errors.New("handle not found"), `handle check`)
@@ -346,10 +336,10 @@ func addTodo(tx *sql.Tx, argv []string, handle string) {
 	if handle == "" {
 		panic("missing handle, TODOs need a handle")
 	}
-	res, err := txExec(tx, `insert into todo(handle,title,creation_date) values(?,?,?)`,
+	res := dbX(tx.Exec, `insert into todo(handle,title,creation_date) values(?,?,?)`,
 		handle, title, effectiveTimeNow)
-	errCheck(err, `creating todo`)
 	todoId, err := res.LastInsertId()
+	errCheck(err, `finding LastInsertId`)
 	fmt.Printf("Added TODO: #%d %s (@%s)\n", todoId, title, handle)
 }
 
@@ -360,13 +350,12 @@ func todoDone(tx *sql.Tx, argv []string, handle string) {
 	todoId, err := strconv.Atoi(argv[0])
 	errCheck(err, `converting number `+argv[0])
 	if todoId > 0 {
-		rows, err := txQuery(tx, `
+		rows := dbQ(tx.Query, `
 		 select todo_id, handle, title, creation_date
 		 from todo
 		 where done_date is null
 		 and todo_id = ?
 		 `, todoId)
-		errCheck(err, `selecting todo`)
 		defer rows.Close()
 
 		if rows.Next() {
@@ -375,8 +364,7 @@ func todoDone(tx *sql.Tx, argv []string, handle string) {
 			var title string
 			var creation_date time.Time
 			rows.Scan(&todoId, &handle, &title, &creation_date)
-			_, err = txExec(tx, `update todo set done_date =  ? where todo_id= ?`, effectiveTimeNow, todoId)
-			errCheck(err, `mark todo as done`)
+			_ = dbX(tx.Exec, `update todo set done_date =  ? where todo_id= ?`, effectiveTimeNow, todoId)
 			fmt.Printf("Done TODO: #%d: %s (@%s)\n", todoId, title, handle)
 		} else {
 			panic(`no valid todo with this number`)
@@ -391,13 +379,12 @@ func todoUndo(tx *sql.Tx, argv []string, handle string) {
 	todoId, err := strconv.Atoi(argv[0])
 	errCheck(err, `converting number `+argv[0])
 	if todoId > 0 {
-		rows, err := txQuery(tx, `
+		rows := dbQ(tx.Query, `
 		 select todo_id, handle, title, creation_date
 		 from todo
 		 where done_date is not null
 		 and todo_id = ?
 		 `, todoId)
-		errCheck(err, `selecting todo`)
 		defer rows.Close()
 
 		if rows.Next() {
@@ -406,8 +393,7 @@ func todoUndo(tx *sql.Tx, argv []string, handle string) {
 			var title string
 			var creation_date time.Time
 			rows.Scan(&todoId, &handle, &title, &creation_date)
-			_, err = txExec(tx, `update todo set done_date =  null where todo_id= ?`, todoId)
-			errCheck(err, `mark todo as undone`)
+			_ = dbX(tx.Exec, `update todo set done_date =  null where todo_id= ?`, todoId)
 			fmt.Printf("Undone TODO: #%d: %s (@%s)\n", todoId, title, handle)
 		} else {
 			panic(`no valid todo with this number`)
@@ -418,22 +404,26 @@ func todoUndo(tx *sql.Tx, argv []string, handle string) {
 func showTodo(db *sql.DB, argv []string, handle string, limit int) {
 	// remember: sql has a problem with null date, so it is problematic with done_date
 	var rows *sql.Rows
-	var err error
+	var orderBy string
+	if limit == 1 {
+		orderBy = "random()"
+	} else {
+		orderBy = "creation_date asc"
+	}
 	if handle == "" {
-		rows, err = dbQuery(db, `select todo_id, handle, title, creation_date
+		rows = dbQ(db.Query, fmt.Sprintf(`select todo_id, handle, title, creation_date
 		from todo
 		where done_date is null
-		order by creation_date asc
-		limit ?`, limit)
+		order by %s
+		limit ?`, orderBy), limit)
 	} else {
-		rows, err = dbQuery(db, `select todo_id, handle, title, creation_date
+		rows = dbQ(db.Query, fmt.Sprintf(`select todo_id, handle, title, creation_date
 		from todo
 		where done_date is null
 		and handle = ?
-		order by creation_date asc
-		limit ?`, handle, limit)
+		order by %s
+		limit ?`, orderBy), handle, limit)
 	}
-	errCheck(err, `selecting todos`)
 	defer rows.Close()
 	//var cnt int = 0
 	for rows.Next() {
@@ -600,10 +590,8 @@ func resetDb(tx *sql.Tx) {
 		panic("You did not use 'force', aborting")
 	}
 	fmt.Println("Erasing all data")
-	_, err := txExec(tx, `delete from entries`)
-	errCheck(err, `delete entries`)
-	_, err = txExec(tx, `delete from headers`)
-	errCheck(err, `delete header`)
+	_ = dbX(tx.Exec, `delete from entries`)
+	_ = dbX(tx.Exec, `delete from headers`)
 }
 
 func importOrgData(tx *sql.Tx, clockfile string) {
@@ -644,8 +632,7 @@ func loadTimeFile(clockfile string,
 }
 
 func showHeaders(db *sql.DB, argv []string) {
-	rows, err := dbQuery(db, `select rowid, header, depth from headers where active=1`)
-	errCheck(err, `Selecting headers`)
+	rows := dbQ(db.Query, `select rowid, header, depth from headers where active=1`)
 	defer rows.Close()
 	for rows.Next() {
 		var id int
@@ -718,11 +705,10 @@ func timeFrame(from, to *time.Time) string {
 }
 
 func running(db *sql.DB, argv []string, extra string) {
-	rows, err := dbQuery(db, `select e.start, h.header, h.handle
+	rows := dbQ(db.Query, `select e.start, h.header, h.handle
 	from entries e
 	join headers h on h.header_id = e.header_id
 	where e.end is null`)
-	errCheck(err, `selecting running`)
 	defer rows.Close()
 	for rows.Next() {
 		var start time.Time
@@ -730,9 +716,9 @@ func running(db *sql.DB, argv []string, extra string) {
 		var handle string
 		rows.Scan(&start, &header, &handle)
 		if handle != "" {
-			fmt.Printf("@%s: %s%s\n", handle, myDuration(effectiveTimeNow.Sub(start)), extra)
+			fmt.Printf(chalk.Green.Color("@%s: ")+chalk.Magenta.Color("%s%s")+"\n", handle, myDuration(effectiveTimeNow.Sub(start)), extra)
 		} else {
-			fmt.Printf("%s: %s%s\n", header, myDuration(effectiveTimeNow.Sub(start)), extra)
+			fmt.Printf(chalk.Green.Color("%s: ")+chalk.Magenta.Color("%s%s")+"\n", header, myDuration(effectiveTimeNow.Sub(start)), extra)
 		}
 	}
 }
@@ -743,12 +729,10 @@ func listLogEntries(db *sql.DB, argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := dbQuery(db, `
-select log_text, creation_date from log
+	rows := dbQ(db.Query, `select log_text, creation_date from log
 where creation_date between ? and ?
 and lower(log_text) like lower('%'||?||'%')
 `, from, to, filter)
-	errCheck(err, `selecting log entries`)
 	defer rows.Close()
 	for rows.Next() {
 		var txt string
@@ -764,7 +748,7 @@ func showTimes(db *sql.DB, argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := dbQuery(db, `
+	rows := dbQ(db.Query, `
 select rowid, header, depth,
   (select sum(strftime('%s',end)-strftime('%s',start)) sum_duration
 	from entries e
@@ -776,7 +760,6 @@ and lower(header) like lower('%'||?||'%')
 and h.active=1
 order by sum_duration desc
 `, from, to, filter)
-	errCheck(err, `showing times`)
 	defer rows.Close()
 	total := time.Duration(0)
 
@@ -800,7 +783,7 @@ func showDays(db *sql.DB, argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows, err := dbQuery(db, `
+	rows := dbQ(db.Query, `
 with b as (select h.header, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
@@ -812,7 +795,6 @@ where lower(header) like lower('%'||?||'%')
 group by header, depth, start_date
 order by start_date asc
 `, from, to, filter)
-	errCheck(err, `showing date times`)
 	defer rows.Close()
 	total := time.Duration(0)
 
@@ -837,11 +819,10 @@ func showOrg(db *sql.DB, argv []string) {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	hdrs, err := dbQuery(db, `select header_id, header, depth
+	hdrs := dbQ(db.Query, `select header_id, header, depth
 	from headers
 	where active=1
 	and lower(header) like lower('%'||?||'%')`, filter)
-	errCheck(err, `fetching headers`)
 	defer hdrs.Close()
 	for hdrs.Next() {
 		var hid int
@@ -853,12 +834,11 @@ func showOrg(db *sql.DB, argv []string) {
 			deep:   depth,
 			header: headerTxt,
 		}
-		entr, err := dbQuery(db, `select start, end, strftime('%s',end)-strftime('%s',start) duration
+		entr := dbQ(db.Query, `select start, end, strftime('%s',end)-strftime('%s',start) duration
 		from entries
 		where header_id = ?
 		and start between ? and ?
 		order by start desc`, hid, from, to)
-		errCheck(err, `Fetching entries for `+string(hid)+` = `+headerTxt)
 		first := true
 		fmt.Printf("%s\n", headEntry)
 		for entr.Next() {
