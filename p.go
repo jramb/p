@@ -432,7 +432,7 @@ func showTodo(db *sql.DB, argv []string, handle string, limit int) {
 		var title string
 		var creation_date time.Time
 		rows.Scan(&todoId, &handle, &title, &creation_date)
-		fmt.Printf("#%d %s (@%s)\n", todoId, title, handle)
+		fmt.Printf(chalk.Cyan.Color("#%d %s (@%s)\n"), todoId, title, handle)
 	}
 }
 
