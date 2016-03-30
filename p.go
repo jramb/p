@@ -43,7 +43,7 @@ func d(args ...interface{}) {
 }
 
 func dbDebug(action string, elapsed time.Duration, query string, args ...interface{}) {
-	d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Cyan.Color(query), " ", chalk.Red, args, chalk.Reset)
+	d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset)
 }
 
 /*
