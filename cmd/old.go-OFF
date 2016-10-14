@@ -11,6 +11,7 @@ func OLD_main() {
 	var tx *sql.Tx
 	var db *sql.DB
 	defer db.RollbackOnError(tx)
+	effectiveTimeNow := time.Now()
 
 	flag.Parse()
 	argv := flag.Args()

@@ -45,10 +45,11 @@ Also automatically ends the currently running period (if any is active).`,
 			if err != nil {
 				return err
 			}
-			if err := tools.CloseAll(tx); err != nil {
+			effectiveTime := GetEffectiveTime()
+			if err := tools.CloseAll(tx, effectiveTime); err != nil {
 				return err
 			}
-			return tools.CheckIn(tx, args, handle)
+			return tools.CheckIn(tx, args, handle, effectiveTime)
 		} else {
 			return err
 		}

@@ -36,7 +36,7 @@ or nothing if nothing is currently running.`,
 		if db, err := tools.OpenDB(true); err == nil {
 			defer db.Close()
 
-			tools.Running(db, args, "")
+			tools.Running(db, args, "", GetEffectiveTime())
 		} else {
 			return err
 		}

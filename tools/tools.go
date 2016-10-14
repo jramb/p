@@ -23,11 +23,13 @@ var orgDateTime = "2006-01-02 Mon 15:04"
 var simpleDateFormat = `2006-01-02`
 var timeFormat = `15:04`
 
-var effectiveTimeNow = time.Now() //.Round(time.Minute)
+//var effectiveTimeNow = time.Now() //.Round(time.Minute)
 
 var force = flag.Bool("force", false, "force the action")
-var modifyEffectiveTime = flag.Duration("m", time.Duration(0), "modified effective time, e.g. -m 7m subtracts 7 minutes")
-var roundTime = flag.Int64("r", 1, "round multiple of minutes")
+
+//var modifyEffectiveTime = flag.Duration("m", time.Duration(0), "modified effective time, e.g. -m 7m subtracts 7 minutes")
+//var roundTime = flag.Int64("r", 1, "round multiple of minutes")
+
 var debug = flag.Bool("d", false, "debug")
 var all = flag.Bool("a", false, "show all")
 
@@ -184,7 +186,7 @@ func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText
 
 func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
 	res := dbX(tx.Exec, `insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
-		header, parent, depth, effectiveTimeNow)
+		header, parent, depth, time.Now())
 	rowid, err := res.LastInsertId()
 	errCheck(err, `finding LastInsertId`)
 	fmt.Printf("Inserted %s\n", header)
@@ -264,7 +266,7 @@ func PrepareDB() error {
  *}
  */
 
-func CloseAll(tx *sql.Tx) error {
+func CloseAll(tx *sql.Tx, effectiveTimeNow time.Time) error {
 	res := dbX(tx.Exec, `update entries set end=? where end is null`, effectiveTimeNow)
 	updatedCnt, err := res.RowsAffected()
 	errCheck(err, `fetching RowsAffected`)
@@ -274,7 +276,7 @@ func CloseAll(tx *sql.Tx) error {
 	return nil
 }
 
-func modifyOpen(tx *sql.Tx, argv []string) {
+func modifyOpen(tx *sql.Tx, argv []string, modifyEffectiveTime *time.Duration) {
 	if *modifyEffectiveTime == 0 {
 		fmt.Fprintln(os.Stderr, `Modify requires an -m(odified) time!`)
 		return
@@ -301,7 +303,7 @@ func modifyOpen(tx *sql.Tx, argv []string) {
 	}
 }
 
-func logEntry(tx *sql.Tx, argv []string) {
+func logEntry(tx *sql.Tx, argv []string, effectiveTimeNow time.Time) {
 	logString := strings.Join(argv, " ")
 	if logString != "" {
 		_ = dbX(tx.Exec, `insert into log (creation_date, log_text) values (?,?)`,
@@ -339,7 +341,7 @@ func VerifyHandle(db *sql.DB, handle string, fixit bool) (string, error) {
 	return handle, nil
 }
 
-func addTodo(tx *sql.Tx, argv []string, handle string) {
+func addTodo(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) {
 	title := strings.Join(argv, " ")
 	if len(argv) == 0 {
 		panic("missing parameter: {@handle} todo text")
@@ -354,7 +356,7 @@ func addTodo(tx *sql.Tx, argv []string, handle string) {
 	fmt.Printf("Added TODO: #%d %s (@%s)\n", todoId, title, handle)
 }
 
-func todoDone(tx *sql.Tx, argv []string, handle string) {
+func todoDone(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) {
 	if len(argv) != 1 {
 		panic("missing or wrong parameter: NN (todo number)")
 	}
@@ -447,7 +449,7 @@ func ShowTodo(db *sql.DB, argv []string, handle string, limit int) {
 	}
 }
 
-func CheckIn(tx *sql.Tx, argv []string, handle string) error {
+func CheckIn(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) error {
 	var header string
 
 	if handle == "" {
@@ -667,7 +669,7 @@ func decodeTimeFrame(argv []string) (from, to time.Time, err error) {
 	parts := strings.Split(str, `-`)
 	var unit string
 	var x int
-	y, m, d := effectiveTimeNow.Date() // Day only
+	y, m, d := time.Now().Date() // Day only
 	from = time.Date(y, m, d, 0, 0, 0, 0, time.Local)
 	if len(parts) > 0 {
 		unit = parts[0]
@@ -697,7 +699,7 @@ func decodeTimeFrame(argv []string) (from, to time.Time, err error) {
 		to = from.AddDate(0, 0, 1)
 	case "week":
 		//Sunday = 0
-		from = time.Date(y, m, d-7*x-(int(effectiveTimeNow.Weekday())+6)%7, 0, 0, 0, 0, time.Local)
+		from = time.Date(y, m, d-7*x-(int(time.Now().Weekday())+6)%7, 0, 0, 0, 0, time.Local)
 		to = from.AddDate(0, 0, 7)
 	case "year":
 		from = time.Date(y, 1, 1, 0, 0, 0, 0, time.Local)
@@ -719,7 +721,7 @@ func timeFrame(from, to *time.Time) string {
 	}
 }
 
-func Running(db *sql.DB, argv []string, extra string) {
+func Running(db *sql.DB, argv []string, extra string, effectiveTimeNow time.Time) {
 	rows := dbQ(db.Query, `select e.start, h.header, h.handle
 	from entries e
 	join headers h on h.header_id = e.header_id

@@ -20,10 +20,24 @@ var RoundTime int
 var Debug bool
 
 func D(args ...interface{}) {
+	//if viper.GetBool("verbose") {
 	if Debug {
 		//log.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
 		fmt.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
 	}
+}
+
+func GetEffectiveTime() time.Time {
+	effectiveTimeNow := time.Now()
+
+	//if ModifyEffectiveTime != nil {
+	effectiveTimeNow = effectiveTimeNow.Add(-ModifyEffectiveTime)
+	//}
+	//if roundTime != nil {
+	effectiveTimeNow = effectiveTimeNow.Round(time.Minute * time.Duration(RoundTime))
+	//}
+	D("Effective time: " + effectiveTimeNow.Format("2006-01-02 15:04"))
+	return effectiveTimeNow
 }
 
 // RootCmd represents the base command when called without any subcommands
@@ -60,7 +74,7 @@ func init() {
 	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.punch.yaml)")
 	RootCmd.PersistentFlags().StringVarP(&Clockfile, "clockfile", "c", "", "Path to the clockfile = time entry database")
 	RootCmd.PersistentFlags().BoolVarP(&Debug, "verbose", "v", false, "Enables verbose output")
-	RootCmd.PersistentFlags().DurationVarP(&ModifyEffectiveTime, "mod", "m", time.Duration(0), "Modify effective time (backwards)")
+	RootCmd.PersistentFlags().DurationVarP(&ModifyEffectiveTime, "mod", "m", time.Duration(0), "modify effective time (backwards), eg 7m subtracts 7 minutes")
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
 	//RootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")

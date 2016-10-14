@@ -42,7 +42,7 @@ var promptCmd = &cobra.Command{
 			if handle != "" {
 				tools.ShowTodo(db, args, handle, 1)
 			}
-			tools.Running(db, args, "\\n")
+			tools.Running(db, args, "\\n", GetEffectiveTime())
 		} else {
 			return err
 		}

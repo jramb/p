@@ -38,7 +38,7 @@ var outCmd = &cobra.Command{
 				return err
 			}
 			defer tools.RollbackOnError(tx)
-			return tools.CloseAll(tx)
+			return tools.CloseAll(tx, GetEffectiveTime())
 		} else {
 			return err
 		}
