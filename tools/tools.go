@@ -1,6 +1,4 @@
-package main
-
-/* 2016 by J Ramb */
+package tools
 
 import (
 	"bufio"
@@ -10,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	//"log"
+	"github.com/spf13/viper"
 	"os"
 	"regexp"
 	"strconv"
@@ -23,7 +22,9 @@ import (
 var orgDateTime = "2006-01-02 Mon 15:04"
 var simpleDateFormat = `2006-01-02`
 var timeFormat = `15:04`
+
 var effectiveTimeNow = time.Now() //.Round(time.Minute)
+
 var force = flag.Bool("force", false, "force the action")
 var modifyEffectiveTime = flag.Duration("m", time.Duration(0), "modified effective time, e.g. -m 7m subtracts 7 minutes")
 var roundTime = flag.Int64("r", 1, "round multiple of minutes")
@@ -34,49 +35,6 @@ type lineType int
 type RowId int64
 
 type myDuration time.Duration
-
-func d(args ...interface{}) {
-	if *debug {
-		//log.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
-		fmt.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
-	}
-}
-
-func dbDebug(action string, elapsed time.Duration, query string, args ...interface{}) {
-	d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset)
-}
-
-/*
-These are only to be able to log what is being executed
-*/
-
-func dbQ(dbF func(string, ...interface{}) (*sql.Rows, error), query string, args ...interface{}) *sql.Rows {
-	start := time.Now()
-	res, err := dbF(query, args...)
-	errCheck(err, query)
-	elapsed := time.Since(start)
-	dbDebug("db", elapsed, query, args)
-	return res
-}
-
-func dbX(dbF func(string, ...interface{}) (sql.Result, error), query string, args ...interface{}) sql.Result {
-	start := time.Now()
-	res, err := dbF(query, args...)
-	errCheck(err, query)
-	elapsed := time.Since(start)
-	dbDebug("db", elapsed, query, args)
-	return res
-}
-
-func (d myDuration) String() string {
-	ds := time.Duration(d).String()
-	_ = ds
-	mins := (time.Duration(d) / time.Minute) % 60
-	hours := (time.Duration(d) - mins*time.Minute) / time.Hour
-	return fmt.Sprintf("%d:%02d", hours, mins)
-	//return fmt.Sprintf("%4d:%02d %s", hours, mins, ds)
-	//return strings.Replace(ds, "m0s", "m", 1)
-}
 
 const (
 	header lineType = iota
@@ -101,6 +59,49 @@ func errCheck(err error, msg string) {
 	if err != nil {
 		panic(fmt.Errorf("%s: %s", msg, err))
 	}
+}
+
+func d(args ...interface{}) {
+	if viper.GetBool("verbose") {
+		//log.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
+		fmt.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
+	}
+}
+
+/*
+These are only to be able to log what is being executed
+*/
+
+func (d myDuration) String() string {
+	ds := time.Duration(d).String()
+	_ = ds
+	mins := (time.Duration(d) / time.Minute) % 60
+	hours := (time.Duration(d) - mins*time.Minute) / time.Hour
+	return fmt.Sprintf("%d:%02d", hours, mins)
+	//return fmt.Sprintf("%4d:%02d %s", hours, mins, ds)
+	//return strings.Replace(ds, "m0s", "m", 1)
+}
+
+func dbDebug(action string, elapsed time.Duration, query string, args ...interface{}) {
+	d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset)
+}
+
+func dbQ(dbF func(string, ...interface{}) (*sql.Rows, error), query string, args ...interface{}) *sql.Rows {
+	start := time.Now()
+	res, err := dbF(query, args...)
+	errCheck(err, query)
+	elapsed := time.Since(start)
+	dbDebug("db", elapsed, query, args)
+	return res
+}
+
+func dbX(dbF func(string, ...interface{}) (sql.Result, error), query string, args ...interface{}) sql.Result {
+	start := time.Now()
+	res, err := dbF(query, args...)
+	errCheck(err, query)
+	elapsed := time.Since(start)
+	dbDebug("db", elapsed, query, args)
+	return res
 }
 
 /*
@@ -196,21 +197,29 @@ func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
 }
 
-func getTx(db *sql.DB) *sql.Tx {
+func GetTx(db *sql.DB) (*sql.Tx, error) {
 	tx, err := db.Begin()
-	errCheck(err, "begin transaction")
-	return tx
+	return tx, err
 }
 
-func openDB(dbfile string) *sql.DB {
-	db, err := sql.Open("sqlite3", dbfile)
-	errCheck(err, "Open database")
-	return db
+func OpenDB(checkExists bool) (*sql.DB, error) {
+	var dbfile string
+	dbfile = viper.GetString("clockfile")
+	d("clockfile=" + dbfile)
+	if checkExists || dbfile == "" {
+		if _, err := os.Stat(dbfile); os.IsNotExist(err) {
+			return nil, fmt.Errorf("Clockfile '%s': %s", dbfile, err)
+		}
+	}
+	return sql.Open("sqlite3", dbfile)
 }
 
-func prepareDB(dbfile string) *sql.DB {
-	db := openDB(dbfile)
-	//NOTdefer db.Close()
+func PrepareDB() error {
+	db, err := OpenDB(false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 	//fmt.Printf("database type: %T\n", db)
 	_ = dbX(db.Exec, `create table if not exists headers
 	( header_id integer primary key autoincrement
@@ -238,7 +247,8 @@ func prepareDB(dbfile string) *sql.DB {
   , done_date datetime)`)
 	setParam(db, "version", "4")
 	//log.Print(`version=` + getParam(db, `version`))
-	return db
+	fmt.Println("Initialized database with version", getParam(db, `version`))
+	return nil
 }
 
 /*
@@ -254,14 +264,14 @@ func prepareDB(dbfile string) *sql.DB {
  *}
  */
 
-func closeAll(tx *sql.Tx) {
+func CloseAll(tx *sql.Tx) error {
 	res := dbX(tx.Exec, `update entries set end=? where end is null`, effectiveTimeNow)
 	updatedCnt, err := res.RowsAffected()
 	errCheck(err, `fetching RowsAffected`)
-	_ = updatedCnt
 	if updatedCnt > 0 {
 		d("Closed entries: ", updatedCnt)
 	}
+	return nil
 }
 
 func modifyOpen(tx *sql.Tx, argv []string) {
@@ -299,7 +309,7 @@ func logEntry(tx *sql.Tx, argv []string) {
 	}
 }
 
-func verifyHandle(db *sql.DB, handle string, fixit bool) string {
+func VerifyHandle(db *sql.DB, handle string, fixit bool) (string, error) {
 	if handle == "" {
 		if fixit {
 			rows := dbQ(db.Query, `select h.handle
@@ -310,22 +320,23 @@ func verifyHandle(db *sql.DB, handle string, fixit bool) string {
 			if rows.Next() {
 				var h string
 				rows.Scan(&h)
-				return h
+				return h, nil
 			} else {
-				return ""
+				return "", nil
 			}
 		} else {
-			return ""
+			return "", nil
 		}
 	} else if handle == "*" {
-		return ""
+		return "", nil
 	}
 	rows := dbQ(db.Query, `select handle from headers where handle = ?`, handle)
 	defer rows.Close()
 	if !rows.Next() {
-		errCheck(errors.New("handle not found"), `handle check`)
+		return "", errors.New("handle not found: " + handle)
+		//errCheck(errors.New("handle not found"), `handle check`)
 	}
-	return handle
+	return handle, nil
 }
 
 func addTodo(tx *sql.Tx, argv []string, handle string) {
@@ -401,7 +412,7 @@ func todoUndo(tx *sql.Tx, argv []string, handle string) {
 	}
 }
 
-func showTodo(db *sql.DB, argv []string, handle string, limit int) {
+func ShowTodo(db *sql.DB, argv []string, handle string, limit int) {
 	// remember: sql has a problem with null date, so it is problematic with done_date
 	var rows *sql.Rows
 	var orderBy string
@@ -436,19 +447,20 @@ func showTodo(db *sql.DB, argv []string, handle string, limit int) {
 	}
 }
 
-func checkIn(tx *sql.Tx, argv []string, handle string) {
+func CheckIn(tx *sql.Tx, argv []string, handle string) error {
 	var header string
 
-	//fmt.Println(`checkIn`, argv, handle)
 	if handle == "" {
 		if len(argv) < 1 {
-			panic(fmt.Errorf("Need a handle (or part of header) to check in"))
+			return fmt.Errorf("Need a handle (or part of header) to check in")
 		}
 		header = argv[0]
 	}
 	//log.Println("header to check into: " + header)
 	hdr, headerText, err := findHeader(tx, header, handle)
-	errCheck(err, `checkIn`)
+	if err != nil {
+		return err
+	}
 
 	entry := orgEntry{
 		lType: clock,
@@ -459,6 +471,7 @@ func checkIn(tx *sql.Tx, argv []string, handle string) {
 	}
 	addTime(tx, entry, hdr)
 	fmt.Printf("Checked into %s\n", headerText)
+	return nil
 }
 
 func parseDateTime(s string) *time.Time {
@@ -631,7 +644,7 @@ func loadTimeFile(clockfile string,
 	data = doer(data, argv)
 }
 
-func showHeaders(db *sql.DB, argv []string) {
+func ShowHeaders(db *sql.DB) error {
 	rows := dbQ(db.Query, `select rowid, header, depth from headers where active=1`)
 	defer rows.Close()
 	for rows.Next() {
@@ -641,9 +654,10 @@ func showHeaders(db *sql.DB, argv []string) {
 		rows.Scan(&id, &head, &depth)
 		fmt.Printf("[%2d] %s %s\n", id, strings.Repeat("   ", depth-1), head)
 	}
+	return nil
 }
 
-func decodeTimeFrame(argv []string) (from, to time.Time) {
+func decodeTimeFrame(argv []string) (from, to time.Time, err error) {
 	var str string
 	if len(argv) > 0 {
 		str = argv[0]
@@ -655,7 +669,6 @@ func decodeTimeFrame(argv []string) (from, to time.Time) {
 	var x int
 	y, m, d := effectiveTimeNow.Date() // Day only
 	from = time.Date(y, m, d, 0, 0, 0, 0, time.Local)
-	var err error
 	if len(parts) > 0 {
 		unit = parts[0]
 	}
@@ -664,7 +677,9 @@ func decodeTimeFrame(argv []string) (from, to time.Time) {
 	}
 	if len(parts) > 1 {
 		x, err = strconv.Atoi(parts[1])
-		errCheck(err, `converting time frame`)
+		if err != nil {
+			return
+		}
 	} else {
 		x = 0
 	}
@@ -704,7 +719,7 @@ func timeFrame(from, to *time.Time) string {
 	}
 }
 
-func running(db *sql.DB, argv []string, extra string) {
+func Running(db *sql.DB, argv []string, extra string) {
 	rows := dbQ(db.Query, `select e.start, h.header, h.handle
 	from entries e
 	join headers h on h.header_id = e.header_id
@@ -723,8 +738,11 @@ func running(db *sql.DB, argv []string, extra string) {
 	}
 }
 
-func listLogEntries(db *sql.DB, argv []string) {
-	from, to := decodeTimeFrame(argv)
+func ListLogEntries(db *sql.DB, argv []string) error {
+	from, to, err := decodeTimeFrame(argv)
+	if err != nil {
+		return err
+	}
 	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
@@ -740,10 +758,14 @@ and lower(log_text) like lower('%'||?||'%')
 		rows.Scan(&txt, &logTime)
 		fmt.Printf("%s: %s\n", simpleDate(logTime), txt)
 	}
+	return nil
 }
 
-func showTimes(db *sql.DB, argv []string) {
-	from, to := decodeTimeFrame(argv)
+func ShowTimes(db *sql.DB, argv []string) (err error) {
+	from, to, err := decodeTimeFrame(argv)
+	if err != nil {
+		return err
+	}
 	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
@@ -775,10 +797,14 @@ order by sum_duration desc
 		fmt.Printf("%14s %s\n", myDuration(dur), head)
 	}
 	fmt.Printf("Total: %7s\n", myDuration(total))
+	return nil
 }
 
-func showDays(db *sql.DB, argv []string) {
-	from, to := decodeTimeFrame(argv)
+func ShowDays(db *sql.DB, argv []string) error {
+	from, to, err := decodeTimeFrame(argv)
+	if err != nil {
+		return err
+	}
 	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
@@ -811,10 +837,14 @@ order by start_date asc
 		fmt.Printf("%s: %6s %s\n", start, myDuration(dur), head)
 	}
 	fmt.Printf("     Total: %6s\n", myDuration(total))
+	return nil
 }
 
-func showOrg(db *sql.DB, argv []string) {
-	from, to := decodeTimeFrame(argv)
+func ShowOrg(db *sql.DB, argv []string) error {
+	from, to, err := decodeTimeFrame(argv)
+	if err != nil {
+		return err
+	}
 	var filter string
 	if len(argv) > 1 {
 		filter = argv[1]
@@ -861,7 +891,9 @@ func showOrg(db *sql.DB, argv []string) {
 		}
 		entr.Close()
 	}
+	return nil
 }
+
 func listClock(data orgData, argv []string) orgData {
 	for _, v := range data {
 		//sv := fmt.Sprintf("%s", v)
@@ -875,141 +907,25 @@ func listClock(data orgData, argv []string) orgData {
 	return data
 }
 
-func main() {
-	var tx *sql.Tx
-	var db *sql.DB
-	defer func() {
-		if r := recover(); r != nil {
-			if tx != nil {
-				tx.Rollback()
-			}
-			fmt.Fprintln(os.Stderr, "Aborting: ", r)
+// defer RollbackOnError(tx)
+func RollbackOnError(tx *sql.Tx) {
+	if r := recover(); r != nil {
+		if tx != nil {
+			tx.Rollback()
 		}
-	}()
-
-	flag.Parse()
-	argv := flag.Args()
-
-	if modifyEffectiveTime != nil {
-		effectiveTimeNow = effectiveTimeNow.Add(-*modifyEffectiveTime)
-	}
-	if roundTime != nil {
-		effectiveTimeNow = effectiveTimeNow.Round(time.Minute * time.Duration(*roundTime))
-	}
-	//fmt.Printf("argv=%v, flag=%v, force=%v\n", argv, flag.Args(), *force)
-	defaultArgs := []string{`help`} //[len(argv):]
-	if len(argv) < len(defaultArgs) {
-		defaultArgs := defaultArgs[len(argv):]
-		argv = append(argv, defaultArgs...)
-	}
-	cmd, argv := argv[0], argv[1:]
-	var handle string
-	if len(argv) >= 1 && strings.HasPrefix(argv[0], `@`) {
-		handle = strings.ToLower(argv[0][1:])
-		argv = argv[1:]
-	}
-	clockfile := os.Getenv(`CLOCKFILE`)
-	clockdb := clockfile + `.db`
-	d(`Clockfile:`, clockdb)
-	//fmt.Println(clockfile)
-	if cmd == `init` {
-		db = prepareDB(clockdb)
+		fmt.Fprintln(os.Stderr, "Aborting: ", r)
 	} else {
-		db = openDB(clockdb)
-	}
-	defer db.Close()
-	switch cmd {
-	case `init`:
-		fmt.Printf("Initialized: %s\n", clockdb)
-	case `head`:
-		showHeaders(db, argv)
-	case `sum`, `show`:
-		showTimes(db, argv)
-	case `day`, `days`:
-		showDays(db, argv)
-	case `print`, `org`:
-		showOrg(db, argv)
-	case `ru`, `running`:
-		running(db, argv, "")
-	case `pro`, `prompt`:
-		handle = verifyHandle(db, handle, true)
-		if handle != "" {
-			showTodo(db, argv, handle, 1)
+		if tx != nil {
+			tx.Commit()
 		}
-		running(db, argv, "\\n")
-	case `ll`:
-		listLogEntries(db, argv)
-	case `out`:
-		tx = getTx(db)
-		closeAll(tx)
-	case `mod`:
-		tx = getTx(db)
-		modifyOpen(tx, argv)
-	case `log`:
-		tx = getTx(db)
-		logEntry(tx, argv)
-	case `in`:
-		tx = getTx(db)
-		handle = verifyHandle(db, handle, false)
-		closeAll(tx)
-		checkIn(tx, argv, handle)
-	case `do`:
-		tx = getTx(db)
-		handle = verifyHandle(db, handle, true)
-		addTodo(tx, argv, handle)
-	case `todo`, `ls`:
-		handle = verifyHandle(db, handle, true)
-		showTodo(db, argv, handle, 9999)
-	case `done`:
-		handle = verifyHandle(db, handle, true)
-		tx = getTx(db)
-		todoDone(tx, argv, handle)
-	case `undo`:
-		handle = verifyHandle(db, handle, true)
-		tx = getTx(db)
-		todoUndo(tx, argv, handle)
-	case `import`:
-		tx = getTx(db)
-		resetDb(tx)
-		//os.Remove(clockdb)
-		importOrgData(tx, argv[0])
-	default:
-		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
-		fmt.Fprintln(os.Stderr, `
-parameters: {<flags>} <command> {<time range> {, {filter> ...}}
-
-commands:
-  h[elp]       show this message
-  init         initialize $CLOCKFILE.db
-  import       imports an org-mode file (requires force)
-  head         lists all active headers
-  sum/show     lists and sums up headers time entries
-  print        prints all time entries in org-mode format
-  ru[nning]    shows the currently running entry
-  pro[mpt]     shows the currently running entry for bash PROMPT_COMMAND
-  in <task>    check in (start timer) for task (also stops all other timers)
-  out          check out (stops ALL timers)
-
-	## LOG handling
-  log          add a log entry
-  ll           show log entries
-
-	## TODO handling
-  do {@h} xxx  adds a TODO
-  todo {@h}    shows all TODOs for the current or specified handle
-  done <nn>    marks a TODO as done
-  undo <nn>    marks a TODO as undone again
-
-You need to set the environment variable CLOCKFILE
-Optional parameters:`)
-		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "Force (-f): %v, effective time (-m): %v\n", *force, effectiveTimeNow)
-		fmt.Fprintf(os.Stderr, "Handle (header shortcut): %s\n", handle)
-		fmt.Fprintln(os.Stderr, `
--- Punch 2016 by jramb --`)
 	}
+}
 
-	if tx != nil {
-		tx.Commit() // not using defer
+func ParseHandle(args []string) (string, []string) {
+	for n, a := range args {
+		if strings.HasPrefix(a, `@`) {
+			return a[1:], append(args[:n], args[n+1:]...) // remove the found element
+		}
 	}
+	return "", args
 }
