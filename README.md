@@ -181,9 +181,9 @@ totals depending on the period).
 
 When rounding to 30m (half an hour):
 
-    * 4:14 becomes 4:00
-    * 2:16 becomes 2:30
-    * etc.
+* 4:14 becomes 4:00
+* 2:16 becomes 2:30
+* etc.
 
 Now some consider rounding down a no-go... My plummer does that, when he works 5 minutes
 that is rounded up to 0:30 and I do not complain!
