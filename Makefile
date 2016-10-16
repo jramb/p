@@ -1,4 +1,7 @@
-default: install
+default: run
+
+run:
+	go run main.go 
 
 install:
 	go install

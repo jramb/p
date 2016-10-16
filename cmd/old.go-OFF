@@ -1,0 +1,141 @@
+package cmd
+
+/* 2016 by J Ramb */
+
+import (
+	"github.com/jramb/p/db"
+	"github.com/spf13/viper"
+)
+
+func OLD_main() {
+	var tx *sql.Tx
+	var db *sql.DB
+	defer db.RollbackOnError(tx)
+	effectiveTimeNow := time.Now()
+
+	flag.Parse()
+	argv := flag.Args()
+
+	if modifyEffectiveTime != nil {
+		effectiveTimeNow = effectiveTimeNow.Add(-*modifyEffectiveTime)
+	}
+	if roundTime != nil {
+		effectiveTimeNow = effectiveTimeNow.Round(time.Minute * time.Duration(*roundTime))
+	}
+	//fmt.Printf("argv=%v, flag=%v, force=%v\n", argv, flag.Args(), *force)
+	defaultArgs := []string{`help`} //[len(argv):]
+	if len(argv) < len(defaultArgs) {
+		defaultArgs := defaultArgs[len(argv):]
+		argv = append(argv, defaultArgs...)
+	}
+	cmd, argv := argv[0], argv[1:]
+	var handle string
+	if len(argv) >= 1 && strings.HasPrefix(argv[0], `@`) {
+		handle = strings.ToLower(argv[0][1:])
+		argv = argv[1:]
+	}
+	clockfile := os.Getenv(`CLOCKFILE`)
+	clockdb := clockfile + `.db`
+	d(`Clockfile:`, clockdb)
+	//fmt.Println(clockfile)
+	if cmd == `init` {
+		db = prepareDB(clockdb)
+	} else {
+		db = openDB(clockdb)
+	}
+	defer db.Close()
+	switch cmd {
+	case `init`:
+		fmt.Printf("Initialized: %s\n", clockdb)
+	case `head`:
+		showHeaders(db, argv)
+	case `sum`, `show`:
+		showTimes(db, argv)
+	case `day`, `days`:
+		showDays(db, argv)
+	case `print`, `org`:
+		showOrg(db, argv)
+	case `ru`, `running`:
+		running(db, argv, "")
+	case `pro`, `prompt`:
+		handle = verifyHandle(db, handle, true)
+		if handle != "" {
+			showTodo(db, argv, handle, 1)
+		}
+		running(db, argv, "\\n")
+	case `ll`:
+		listLogEntries(db, argv)
+	case `out`:
+		tx = getTx(db)
+		closeAll(tx)
+	case `mod`:
+		tx = getTx(db)
+		modifyOpen(tx, argv)
+	case `log`:
+		tx = getTx(db)
+		logEntry(tx, argv)
+	case `in`:
+		tx = getTx(db)
+		handle = verifyHandle(db, handle, false)
+		closeAll(tx)
+		checkIn(tx, argv, handle)
+	case `do`:
+		tx = getTx(db)
+		handle = verifyHandle(db, handle, true)
+		addTodo(tx, argv, handle)
+	case `todo`, `ls`:
+		handle = verifyHandle(db, handle, true)
+		showTodo(db, argv, handle, 9999)
+	case `done`:
+		handle = verifyHandle(db, handle, true)
+		tx = getTx(db)
+		todoDone(tx, argv, handle)
+	case `undo`:
+		handle = verifyHandle(db, handle, true)
+		tx = getTx(db)
+		todoUndo(tx, argv, handle)
+	case `import`:
+		tx = getTx(db)
+		resetDb(tx)
+		//os.Remove(clockdb)
+		importOrgData(tx, argv[0])
+	default:
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, `
+parameters: {<flags>} <command> {<time range> {, {filter> ...}}
+
+commands:
+  h[elp]       show this message
+  init         initialize $CLOCKFILE.db
+  import       imports an org-mode file (requires force)
+  head         lists all active headers
+  sum/show     lists and sums up headers time entries
+  print        prints all time entries in org-mode format
+  ru[nning]    shows the currently running entry
+  pro[mpt]     shows the currently running entry for bash PROMPT_COMMAND
+  in <task>    check in (start timer) for task (also stops all other timers)
+  out          check out (stops ALL timers)
+
+	## LOG handling
+  log          add a log entry
+  ll           show log entries
+
+	## TODO handling
+  do {@h} xxx  adds a TODO
+  todo {@h}    shows all TODOs for the current or specified handle
+  done <nn>    marks a TODO as done
+  undo <nn>    marks a TODO as undone again
+
+You need to set the environment variable CLOCKFILE
+Optional parameters:`)
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "Force (-f): %v, effective time (-m): %v\n", *force, effectiveTimeNow)
+		fmt.Fprintf(os.Stderr, "Handle (header shortcut): %s\n", handle)
+		fmt.Fprintln(os.Stderr, `
+-- Punch 2016 by jramb --`)
+	}
+
+	if tx != nil {
+		tx.Commit() // not using defer
+	}
+}

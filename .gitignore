@@ -23,3 +23,5 @@ p
 *.exe
 *.test
 *.prof
+
+timetracker.org.db
