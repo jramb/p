@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 )
@@ -29,19 +30,12 @@ import (
 var inCmd = &cobra.Command{
 	Use:   "in",
 	Short: "punch in a new entry (start a period)",
-	Long: `Starts a new entry for the given project.
+	Long: `Starts a new entry for the given header.
 Also automatically ends the currently running period (if any is active).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if db, err := tools.OpenDB(true); err == nil {
-			defer db.Close()
-			tx, err := db.Begin() // was: tools GetTx
-			if err != nil {
-				return err
-			}
-			defer tools.RollbackOnError(tx)
-
+		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
 			handle, args := tools.ParseHandle(args)
-			handle, err = tools.VerifyHandle(db, handle, true)
+			handle, err := tools.VerifyHandle(db, handle, true)
 			if err != nil {
 				return err
 			}
@@ -50,9 +44,7 @@ Also automatically ends the currently running period (if any is active).`,
 				return err
 			}
 			return tools.CheckIn(tx, args, handle, effectiveTime)
-		} else {
-			return err
-		}
+		})
 	},
 }
 

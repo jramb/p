@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 )
@@ -28,19 +29,14 @@ import (
 // runningCmd represents the running command
 var runningCmd = &cobra.Command{
 	Use:   "ru", // aka "running"
-	Short: "the currently running project (if any)",
-	Long: `Shows one line containing the currently running project,
+	Short: "the currently running time entry (if any)",
+	Long: `Shows one line containing the currently running time entry,
 or nothing if nothing is currently running.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		//defer tools.RollbackOnError(tx)
-		if db, err := tools.OpenDB(true); err == nil {
-			defer db.Close()
-
+		return tools.WithOpenDB(true, func(db *sql.DB) error {
 			tools.Running(db, args, "", GetEffectiveTime())
-		} else {
-			return err
-		}
-		return nil
+			return nil
+		})
 	},
 }
 

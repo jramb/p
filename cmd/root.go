@@ -15,12 +15,11 @@ var EffectiveTimeNow = time.Now() //.round(time.Minute)
 var cfgFile string
 var Clockfile string
 var ModifyEffectiveTime time.Duration
-var RoundTime int
 
 var Debug bool
 
 func D(args ...interface{}) {
-	//if viper.GetBool("verbose") {
+	//if viper.GetBool("debug") {
 	if Debug {
 		//log.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
 		fmt.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
@@ -31,10 +30,11 @@ func GetEffectiveTime() time.Time {
 	effectiveTimeNow := time.Now()
 
 	//if ModifyEffectiveTime != nil {
-	effectiveTimeNow = effectiveTimeNow.Add(-ModifyEffectiveTime)
+	effectiveTimeNow = effectiveTimeNow.Add(-ModifyEffectiveTime).Round(time.Minute)
 	//}
+	// Rounding is not performed during entry
 	//if roundTime != nil {
-	effectiveTimeNow = effectiveTimeNow.Round(time.Minute * time.Duration(RoundTime))
+	//effectiveTimeNow = effectiveTimeNow.Round(RoundTime)
 	//}
 	D("Effective time: " + effectiveTimeNow.Format("2006-01-02 15:04"))
 	return effectiveTimeNow
@@ -47,12 +47,9 @@ var RootCmd = &cobra.Command{
 	Long: `Punch or short 'p': A flexible time tracker and time reporting tool.
 made by (and mainly for) Jörg Ramb.
 
-Use this tool to keep track of time spent on projects
-and assignments. Apart from registering the time periods in a database you
-can use this to perform simple housekeeping and reporting on the data.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	//	Run: func(cmd *cobra.Command, args []string) { },
+Use this tool to keep track of time spent on projects, assignments, work, etc.
+Apart from registering the time periods in a database you
+can use this to perform simple todo, logging and reporting on the data.`,
 }
 
 // Execute adds all child commands to the root command sets flags appropriately.
@@ -73,13 +70,13 @@ func init() {
 
 	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.punch.yaml)")
 	RootCmd.PersistentFlags().StringVarP(&Clockfile, "clockfile", "c", "", "Path to the clockfile = time entry database")
-	RootCmd.PersistentFlags().BoolVarP(&Debug, "verbose", "v", false, "Enables verbose output")
+	RootCmd.PersistentFlags().BoolVarP(&Debug, "debug", "D", false, "Enables debug output")
 	RootCmd.PersistentFlags().DurationVarP(&ModifyEffectiveTime, "mod", "m", time.Duration(0), "modify effective time (backwards), eg 7m subtracts 7 minutes")
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
 	//RootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	viper.BindPFlag("clockfile", RootCmd.PersistentFlags().Lookup("clockfile"))
-	viper.BindPFlag("verbose", RootCmd.PersistentFlags().Lookup("verbose"))
+	viper.BindPFlag("debug", RootCmd.PersistentFlags().Lookup("debug"))
 	//fmt.Println("2clockfile=", viper.GetString("clockfile"))
 }
 

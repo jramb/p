@@ -20,6 +20,7 @@ import (
 )
 
 var orgDateTime = "2006-01-02 Mon 15:04"
+var isoDateTime = "2006-01-02 15:04:05"
 var simpleDateFormat = `2006-01-02`
 var timeFormat = `15:04`
 
@@ -64,7 +65,7 @@ func errCheck(err error, msg string) {
 }
 
 func d(args ...interface{}) {
-	if viper.GetBool("verbose") {
+	if viper.GetBool("debug") {
 		//log.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
 		fmt.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
 	}
@@ -75,11 +76,16 @@ These are only to be able to log what is being executed
 */
 
 func (d myDuration) String() string {
+	var sign string
+	if d < 0 {
+		sign = "-"
+		d = -d
+	}
 	ds := time.Duration(d).String()
 	_ = ds
 	mins := (time.Duration(d) / time.Minute) % 60
 	hours := (time.Duration(d) - mins*time.Minute) / time.Hour
-	return fmt.Sprintf("%d:%02d", hours, mins)
+	return fmt.Sprintf("%s%d:%02d", sign, hours, mins)
 	//return fmt.Sprintf("%4d:%02d %s", hours, mins, ds)
 	//return strings.Replace(ds, "m0s", "m", 1)
 }
@@ -184,13 +190,15 @@ func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText
 	return
 }
 
-func addHeader(tx *sql.Tx, header string, parent RowId, depth int) RowId {
-	res := dbX(tx.Exec, `insert into headers (header, parent, depth, creation_date, active) values(?,?,?,?,1)`,
-		header, parent, depth, time.Now())
+func AddHeader(tx *sql.Tx, header string, handle string, parent RowId, depth int) (RowId, error) {
+	res := dbX(tx.Exec, `insert into headers (header, handle, parent, depth, creation_date, active) values(?,?,?,?,?,1)`,
+		header, handle, parent, depth, time.Now())
 	rowid, err := res.LastInsertId()
-	errCheck(err, `finding LastInsertId`)
+	if err != nil {
+		return RowId(rowid), err
+	}
 	fmt.Printf("Inserted %s\n", header)
-	return RowId(rowid)
+	return RowId(rowid), nil
 }
 
 func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
@@ -210,10 +218,30 @@ func OpenDB(checkExists bool) (*sql.DB, error) {
 	d("clockfile=" + dbfile)
 	if checkExists || dbfile == "" {
 		if _, err := os.Stat(dbfile); os.IsNotExist(err) {
-			return nil, fmt.Errorf("Clockfile '%s': %s", dbfile, err)
+			return nil, fmt.Errorf("Could not find your clockfile, please verify setup in your configuration\n*** %s %s", err, dbfile)
 		}
 	}
 	return sql.Open("sqlite3", dbfile)
+}
+
+func WithOpenDB(checkExists bool, fn func(*sql.DB) error) error {
+	if db, err := OpenDB(checkExists); err == nil {
+		defer db.Close()
+		return fn(db)
+	} else {
+		return err
+	}
+}
+
+func WithTransaction(fn func(*sql.DB, *sql.Tx) error) error {
+	return WithOpenDB(true, func(db *sql.DB) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer RollbackOnError(tx)
+		return fn(db, tx)
+	})
 }
 
 func PrepareDB() error {
@@ -303,12 +331,13 @@ func modifyOpen(tx *sql.Tx, argv []string, modifyEffectiveTime *time.Duration) {
 	}
 }
 
-func logEntry(tx *sql.Tx, argv []string, effectiveTimeNow time.Time) {
+func LogEntry(tx *sql.Tx, argv []string, effectiveTimeNow time.Time) error {
 	logString := strings.Join(argv, " ")
 	if logString != "" {
 		_ = dbX(tx.Exec, `insert into log (creation_date, log_text) values (?,?)`,
 			effectiveTimeNow, strings.Join(argv, " "))
 	}
+	return nil
 }
 
 func VerifyHandle(db *sql.DB, handle string, fixit bool) (string, error) {
@@ -341,10 +370,10 @@ func VerifyHandle(db *sql.DB, handle string, fixit bool) (string, error) {
 	return handle, nil
 }
 
-func addTodo(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) {
-	title := strings.Join(argv, " ")
-	if len(argv) == 0 {
-		panic("missing parameter: {@handle} todo text")
+func AddTodo(tx *sql.Tx, title string, handle string, effectiveTimeNow time.Time) error {
+	//title := strings.Join(argv, " ")
+	if len(title) == 0 {
+		panic("missing parameter: todo text")
 	}
 	if handle == "" {
 		panic("missing handle, TODOs need a handle")
@@ -352,69 +381,78 @@ func addTodo(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Tim
 	res := dbX(tx.Exec, `insert into todo(handle,title,creation_date) values(?,?,?)`,
 		handle, title, effectiveTimeNow)
 	todoId, err := res.LastInsertId()
-	errCheck(err, `finding LastInsertId`)
+	if err != nil {
+		return err
+	}
 	fmt.Printf("Added TODO: #%d %s (@%s)\n", todoId, title, handle)
+	return nil
 }
 
-func todoDone(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) {
-	if len(argv) != 1 {
+func TodoDone(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) error {
+	if len(argv) == 0 {
 		panic("missing or wrong parameter: NN (todo number)")
 	}
-	todoId, err := strconv.Atoi(argv[0])
-	errCheck(err, `converting number `+argv[0])
-	if todoId > 0 {
-		rows := dbQ(tx.Query, `
+	for _, nn := range argv {
+		todoId, err := strconv.Atoi(nn)
+		errCheck(err, `converting number `+nn)
+		if todoId > 0 {
+			rows := dbQ(tx.Query, `
 		 select todo_id, handle, title, creation_date
 		 from todo
 		 where done_date is null
 		 and todo_id = ?
 		 `, todoId)
-		defer rows.Close()
+			defer rows.Close()
 
-		if rows.Next() {
-			var todoId int
-			var handle string
-			var title string
-			var creation_date time.Time
-			rows.Scan(&todoId, &handle, &title, &creation_date)
-			_ = dbX(tx.Exec, `update todo set done_date =  ? where todo_id= ?`, effectiveTimeNow, todoId)
-			fmt.Printf("Done TODO: #%d: %s (@%s)\n", todoId, title, handle)
-		} else {
-			panic(`no valid todo with this number`)
+			if rows.Next() {
+				var todoId int
+				var handle string
+				var title string
+				var creation_date time.Time
+				rows.Scan(&todoId, &handle, &title, &creation_date)
+				_ = dbX(tx.Exec, `update todo set done_date =  ? where todo_id= ?`, effectiveTimeNow, todoId)
+				fmt.Printf("Done TODO: #%d: %s (@%s)\n", todoId, title, handle)
+			} else {
+				return fmt.Errorf("No valid TODO with this number %d", todoId)
+			}
 		}
 	}
+	return nil
 }
 
-func todoUndo(tx *sql.Tx, argv []string, handle string) {
-	if len(argv) != 1 {
+func TodoUndo(tx *sql.Tx, argv []string, handle string) error {
+	if len(argv) == 0 {
 		panic("missing or wrong parameter: NN (todo number)")
 	}
-	todoId, err := strconv.Atoi(argv[0])
-	errCheck(err, `converting number `+argv[0])
-	if todoId > 0 {
-		rows := dbQ(tx.Query, `
+	for _, nn := range argv {
+		todoId, err := strconv.Atoi(nn)
+		errCheck(err, `converting number `+nn)
+		if todoId > 0 {
+			rows := dbQ(tx.Query, `
 		 select todo_id, handle, title, creation_date
 		 from todo
 		 where done_date is not null
 		 and todo_id = ?
 		 `, todoId)
-		defer rows.Close()
+			defer rows.Close()
 
-		if rows.Next() {
-			var todoId int
-			var handle string
-			var title string
-			var creation_date time.Time
-			rows.Scan(&todoId, &handle, &title, &creation_date)
-			_ = dbX(tx.Exec, `update todo set done_date =  null where todo_id= ?`, todoId)
-			fmt.Printf("Undone TODO: #%d: %s (@%s)\n", todoId, title, handle)
-		} else {
-			panic(`no valid todo with this number`)
+			if rows.Next() {
+				var todoId int
+				var handle string
+				var title string
+				var creation_date time.Time
+				rows.Scan(&todoId, &handle, &title, &creation_date)
+				_ = dbX(tx.Exec, `update todo set done_date =  null where todo_id= ?`, todoId)
+				fmt.Printf("Undone TODO: #%d: %s (@%s)\n", todoId, title, handle)
+			} else {
+				return fmt.Errorf("No valid TODO with this number %d", todoId)
+			}
 		}
 	}
+	return nil
 }
 
-func ShowTodo(db *sql.DB, argv []string, handle string, limit int) {
+func ShowTodo(db *sql.DB, argv []string, handle string, limit int) error {
 	// remember: sql has a problem with null date, so it is problematic with done_date
 	var rows *sql.Rows
 	var orderBy string
@@ -447,6 +485,7 @@ func ShowTodo(db *sql.DB, argv []string, handle string, limit int) {
 		rows.Scan(&todoId, &handle, &title, &creation_date)
 		fmt.Printf(chalk.Cyan.Color("#%d %s (@%s)\n"), todoId, title, handle)
 	}
+	return nil
 }
 
 func CheckIn(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) error {
@@ -614,6 +653,7 @@ func importOrgData(tx *sql.Tx, clockfile string) {
 	c := make(chan orgEntry)
 	go loadOrgFile(clockfile, c)
 	for entry := range c {
+		var err error
 		//fmt.Printf("len=%d, headerStack=%+v, dc=%d\n", len(headerStack), headerStack, entry.depthChange)
 		switch entry.depthChange {
 		case 1:
@@ -626,7 +666,10 @@ func importOrgData(tx *sql.Tx, clockfile string) {
 		//fmt.Printf("len=%d, headerStack=%+v", len(headerStack), headerStack)
 		switch entry.lType {
 		case header:
-			headerStack[len(headerStack)-1] = addHeader(tx, entry.header, headerStack[len(headerStack)-2], entry.deep)
+			headerStack[len(headerStack)-1], err = AddHeader(tx, entry.header, "", headerStack[len(headerStack)-2], entry.deep)
+			if err != nil {
+				panic(err)
+			}
 		case clock:
 			addTime(tx, entry, headerStack[len(headerStack)-1])
 		}
@@ -647,14 +690,16 @@ func loadTimeFile(clockfile string,
 }
 
 func ShowHeaders(db *sql.DB) error {
-	rows := dbQ(db.Query, `select rowid, header, depth from headers where active=1`)
+	rows := dbQ(db.Query, `select rowid, header, handle, depth from headers where active=1`)
 	defer rows.Close()
 	for rows.Next() {
 		var id int
 		var head string
+		var handle string
 		var depth int
-		rows.Scan(&id, &head, &depth)
-		fmt.Printf("[%2d] %s %s\n", id, strings.Repeat("   ", depth-1), head)
+		rows.Scan(&id, &head, &handle, &depth)
+
+		fmt.Printf("[%2d] %s %s\n", id, strings.Repeat("   ", depth), formatHeader(head, handle))
 	}
 	return nil
 }
@@ -715,9 +760,9 @@ func decodeTimeFrame(argv []string) (from, to time.Time, err error) {
 
 func timeFrame(from, to *time.Time) string {
 	if to == nil {
-		return fmt.Sprintf("%s --\n", simpleDate(*from))
+		return fmt.Sprintf("%s --", simpleDate(*from))
 	} else {
-		return fmt.Sprintf("%s -- %s\n", simpleDate(*from), simpleDate(to.AddDate(0, 0, -1)))
+		return fmt.Sprintf("%s -- %s", simpleDate(*from), simpleDate(to.AddDate(0, 0, -1)))
 	}
 }
 
@@ -758,12 +803,41 @@ and lower(log_text) like lower('%'||?||'%')
 		var txt string
 		var logTime time.Time
 		rows.Scan(&txt, &logTime)
-		fmt.Printf("%s: %s\n", simpleDate(logTime), txt)
+		fmt.Printf("%s: %s\n", logTime.Format(isoDateTime), txt)
 	}
 	return nil
 }
 
-func ShowTimes(db *sql.DB, argv []string) (err error) {
+func formatRoundErr(rounderr time.Duration) string {
+	if viper.GetBool("show.display-rounding") {
+		//rounderr = -rounderr
+		if rounderr >= 0 {
+			return fmt.Sprintf("  +%s", myDuration(rounderr))
+		} else {
+			return fmt.Sprintf("  %s", myDuration(rounderr))
+		}
+	} else {
+		return ""
+	}
+}
+
+func DurationRound(unrounded time.Duration, rnd time.Duration, bias time.Duration) time.Duration {
+	var zero time.Time // zero.IsZero!
+	if bias > rnd/2 {
+		bias = rnd / 2
+	}
+	return zero.Add(unrounded).Add(bias).Round(rnd).Sub(zero)
+}
+
+func formatHeader(head, handle string) string {
+	if handle != "" {
+		return head + " @" + handle
+	} else {
+		return head
+	}
+}
+
+func ShowTimes(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) (err error) {
 	from, to, err := decodeTimeFrame(argv)
 	if err != nil {
 		return err
@@ -773,7 +847,7 @@ func ShowTimes(db *sql.DB, argv []string) (err error) {
 		filter = argv[1]
 	}
 	rows := dbQ(db.Query, `
-select rowid, header, depth,
+select rowid, header, handle, depth,
   (select sum(strftime('%s',end)-strftime('%s',start)) sum_duration
 	from entries e
 	where e.header_id = h.header_id
@@ -786,23 +860,29 @@ order by sum_duration desc
 `, from, to, filter)
 	defer rows.Close()
 	total := time.Duration(0)
+	rounderr := time.Duration(0)
 
-	fmt.Printf(timeFrame(&from, &to))
+	fmt.Println("Headers:", timeFrame(&from, &to))
 	for rows.Next() {
 		var id int
 		var head string
+		var handle string
 		var depth int
 		var duration int64
-		rows.Scan(&id, &head, &depth, &duration)
+		rows.Scan(&id, &head, &handle, &depth, &duration)
 		dur := time.Duration(duration * 1000000000)
+		rounded := DurationRound(dur, rounding, bias)
+		diff := dur - rounded
+		dur = rounded
+		rounderr += diff
+		fmt.Printf("%21s%s  %s\n", myDuration(dur), formatRoundErr(diff), formatHeader(head, handle))
 		total += dur
-		fmt.Printf("%14s %s\n", myDuration(dur), head)
 	}
-	fmt.Printf("Total: %7s\n", myDuration(total))
+	fmt.Printf("     Total: %9s%s\n", myDuration(total), formatRoundErr(rounderr))
 	return nil
 }
 
-func ShowDays(db *sql.DB, argv []string) error {
+func ShowDays(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) error {
 	from, to, err := decodeTimeFrame(argv)
 	if err != nil {
 		return err
@@ -812,33 +892,38 @@ func ShowDays(db *sql.DB, argv []string) error {
 		filter = argv[1]
 	}
 	rows := dbQ(db.Query, `
-with b as (select h.header, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
+with b as (select h.header, h.handle, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
 where e.end is not null
 and e.start between ? and ?)
-select start_date, header, depth, sum(duration)
+select start_date, header, handle, depth, sum(duration)
 from b
 where lower(header) like lower('%'||?||'%')
-group by header, depth, start_date
+group by header, handle, depth, start_date
 order by start_date asc
 `, from, to, filter)
 	defer rows.Close()
 	total := time.Duration(0)
+	rounderr := time.Duration(0)
 
-	fmt.Printf(timeFrame(&from, &to))
+	fmt.Println("Daily:", timeFrame(&from, &to))
 	for rows.Next() {
 		var start string
 		var head string
+		var handle string
 		var depth int
 		var duration int64
-		// FIXME
-		rows.Scan(&start, &head, &depth, &duration)
+		rows.Scan(&start, &head, &handle, &depth, &duration)
 		dur := time.Duration(duration * 1000000000)
+		rounded := DurationRound(dur, rounding, bias)
+		diff := dur - rounded
+		rounderr += diff
+		dur = rounded
+		fmt.Printf("%s: %9s%s  %s\n", start, myDuration(dur), formatRoundErr(diff), formatHeader(head, handle))
 		total += dur
-		fmt.Printf("%s: %6s %s\n", start, myDuration(dur), head)
 	}
-	fmt.Printf("     Total: %6s\n", myDuration(total))
+	fmt.Printf("     Total: %9s%s\n", myDuration(total), formatRoundErr(rounderr))
 	return nil
 }
 

@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 )
@@ -32,26 +33,39 @@ var logCmd = &cobra.Command{
 	Long:  `Several log tools`,
 }
 
-var listCmd = &cobra.Command{
-	Use:   "list",
+var logAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "add log entry",
+	Long:  `Adds a new log entry.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
+			handle, args := tools.ParseHandle(args)
+			handle, err := tools.VerifyHandle(db, handle, true)
+			if err != nil {
+				return err
+			}
+			effectiveTime := GetEffectiveTime()
+
+			return tools.LogEntry(tx, args, effectiveTime)
+		})
+	},
+}
+
+var logListCmd = &cobra.Command{
+	Use:   "list", // aka "ll"
 	Short: "list log entries",
 	Long:  `Shows the log entries`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		//defer tools.RollbackOnError(tx)
-		//D(args)
-		if db, err := tools.OpenDB(true); err == nil {
-			defer db.Close()
-
+		return tools.WithOpenDB(true, func(db *sql.DB) error {
 			return tools.ListLogEntries(db, args)
-		} else {
-			return err
-		}
+		})
 	},
 }
 
 func init() {
 	RootCmd.AddCommand(logCmd)
-	logCmd.AddCommand(listCmd)
+	logCmd.AddCommand(logListCmd)
+	logCmd.AddCommand(logAddCmd)
 
 	// Here you will define your flags and configuration settings.
 

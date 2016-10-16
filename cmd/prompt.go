@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 )
@@ -31,11 +32,9 @@ var promptCmd = &cobra.Command{
 	Short: "time entry details, suitable for bash prompt usage",
 	Long:  `Shows the current running time in a colored format, usable for prompt in bash.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if db, err := tools.OpenDB(true); err == nil {
-			defer db.Close()
-
+		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
 			handle, args := tools.ParseHandle(args)
-			handle, err = tools.VerifyHandle(db, handle, true)
+			handle, err := tools.VerifyHandle(db, handle, true)
 			if err != nil {
 				return err
 			}
@@ -43,10 +42,8 @@ var promptCmd = &cobra.Command{
 				tools.ShowTodo(db, args, handle, 1)
 			}
 			tools.Running(db, args, "\\n", GetEffectiveTime())
-		} else {
-			return err
-		}
-		return nil
+			return nil
+		})
 	},
 }
 

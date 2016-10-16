@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 )
@@ -28,20 +29,12 @@ import (
 // outCmd represents the out command
 var outCmd = &cobra.Command{
 	Use:   "out",
-	Short: "punch out of the current project (if active)",
+	Short: "punch out of the current header (if active)",
 	Long:  `Ends the currently running period (punch out).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if db, err := tools.OpenDB(true); err == nil {
-			defer db.Close()
-			tx, err := db.Begin() // was: tools GetTx
-			if err != nil {
-				return err
-			}
-			defer tools.RollbackOnError(tx)
+		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
 			return tools.CloseAll(tx, GetEffectiveTime())
-		} else {
-			return err
-		}
+		})
 	},
 }
 

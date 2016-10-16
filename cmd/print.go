@@ -21,6 +21,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 )
@@ -35,14 +36,10 @@ one line per entry. The format is compatible with Emacs org-mode.
 Historical, since the impressive org-mode was my previous time
 tracking tool.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if db, err := tools.OpenDB(true); err == nil {
-			defer db.Close()
-
+		return tools.WithOpenDB(true, func(db *sql.DB) error {
 			tools.ShowOrg(db, args)
-		} else {
-			return err
-		}
-		return nil
+			return nil
+		})
 	},
 }
 

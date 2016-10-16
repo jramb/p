@@ -1,2 +1,6 @@
 clockfile: timetracker.org.db
-verbose: true
+debug: false
+show:
+  rounding: 30m
+  bias: 5m
+  display-rounding: true

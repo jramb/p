@@ -21,27 +21,52 @@
 package cmd
 
 import (
+	"database/sql"
+	"fmt"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
+	"strings"
 )
 
 // headCmd represents the head command
 var headCmd = &cobra.Command{
 	Use:   "head",
+	Short: "maintain headers",
+	Long: `Functions to maintain the headers.
+You need to have a header to create time entries.`,
+}
+
+var headListCmd = &cobra.Command{
+	Use:   "list",
 	Short: "Lists all active headers",
 	Long:  `Lists all active headers.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		//defer tools.RollbackOnError(tx)
-		if db, err := tools.OpenDB(true); err == nil {
-			defer db.Close()
-
+		return tools.WithOpenDB(true, func(db *sql.DB) error {
 			return tools.ShowHeaders(db)
-		} else {
+		})
+	},
+}
+
+var headAddCmd = &cobra.Command{
+	Use:   "add",
+	Short: "add a new header",
+	Long:  `Adds a new header.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
+			handle, args := tools.ParseHandle(args)
+			if _, err := tools.VerifyHandle(db, handle, false); err == nil {
+				return fmt.Errorf("Handler '%s' does already exist!", handle)
+			}
+
+			var dummyRowId tools.RowId
+			_, err := tools.AddHeader(tx, strings.Join(args, " "), handle, dummyRowId, 0)
 			return err
-		}
+		})
 	},
 }
 
 func init() {
 	RootCmd.AddCommand(headCmd)
+	headCmd.AddCommand(headAddCmd)
+	headCmd.AddCommand(headListCmd)
 }
