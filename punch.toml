@@ -1,0 +1,9 @@
+clockfile = "timetracker.org.db" # current directory
+#OR FOR EXAMPLE: clockfile = "/home/jramb/.time/timetracker.org.db" 
+debug = false
+
+[show]
+rounding = "30m"        # default is "1m"
+bias = "5m"             # default is "0m"
+display-rounding = true # default is false
+

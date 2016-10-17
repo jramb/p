@@ -86,9 +86,13 @@ func initConfig() {
 		viper.SetConfigFile(cfgFile)
 	}
 
-	viper.SetConfigName(".punch") // name of config file (without extension)
-	viper.AddConfigPath(".")
-	viper.AddConfigPath("$HOME") // adding home directory as first search path
+	viper.SetConfigName("punch")                                    // name of config file (without extension)
+	viper.AddConfigPath(".")                                        //current
+	viper.AddConfigPath("$HOME/.config")                            //config directory
+	viper.AddConfigPath("$HOME")                                    // adding home directory as first search path
+	if userprofile := os.Getenv("USERPROFILE"); userprofile != "" { //Windows
+		viper.AddConfigPath(os.Getenv(userprofile))
+	}
 	//viper.AutomaticEnv()         // read in environment variables that match
 
 	// If a config file is found, read it in.

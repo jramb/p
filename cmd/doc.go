@@ -21,52 +21,43 @@
 package cmd
 
 import (
-	"database/sql"
-	"fmt"
-	"github.com/jramb/p/tools"
+	"os"
+
 	"github.com/spf13/cobra"
-	"strings"
 )
 
-// headCmd represents the head command
-var headCmd = &cobra.Command{
-	Use:   "head",
-	Short: "maintain headers",
-	Long: `Functions to maintain the headers.
-You need to have a header to create time entries.`,
+var docCmd = &cobra.Command{
+	Use:   "doc",
+	Short: "documentation and tools for punch",
 }
 
-var headListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "Lists all active headers",
-	Long:  `Lists all active headers.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return tools.WithOpenDB(true, func(db *sql.DB) error {
-			return tools.ShowHeaders(db)
-		})
-	},
-}
+// bashCmd represents the bash command
+var bashCmd = &cobra.Command{
+	Use:   "bash-completion",
+	Short: "A brief description of your command",
+	Long: `A longer description that spans multiple lines and likely contains examples
+and usage of using your command. For example:
 
-var headAddCmd = &cobra.Command{
-	Use:   "add",
-	Short: "add a new header",
-	Long:  `Adds a new header.`,
+Cobra is a CLI library for Go that empowers applications.
+This application is a tool to generate the needed files
+to quickly create a Cobra application.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
-			handle, args := tools.ParseHandle(args)
-			if _, err := tools.VerifyHandle(db, handle, false); err == nil {
-				return fmt.Errorf("Handler '%s' does already exist!", handle)
-			}
-
-			var dummyRowID tools.RowId
-			_, err := tools.AddHeader(tx, strings.Join(args, " "), handle, dummyRowID, 0)
-			return err
-		})
+		return RootCmd.GenBashCompletion(os.Stdout)
 	},
 }
 
 func init() {
-	RootCmd.AddCommand(headCmd)
-	headCmd.AddCommand(headAddCmd)
-	headCmd.AddCommand(headListCmd)
+	RootCmd.AddCommand(docCmd)
+	docCmd.AddCommand(bashCmd)
+
+	// Here you will define your flags and configuration settings.
+
+	// Cobra supports Persistent Flags which will work for this command
+	// and all subcommands, e.g.:
+	// bashCmd.PersistentFlags().String("foo", "", "A help for foo")
+
+	// Cobra supports local flags which will only run when this command
+	// is called directly, e.g.:
+	// bashCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+
 }

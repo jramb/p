@@ -49,20 +49,35 @@ Before you can use punch properly, just a quick setup is necessary.
 Decide where your database file should reside. It is not very big and grows
 quite slowly, mine is about 120k, containing several years of data.
 
-Lets assume we put it into you home directory and call it `timetracker.org.db`
-(the name is purely yours, you will probably not be working with this file directly anyway,
-but you will want to have it in a secure place (and take backups, please)).
+For a quick start, lets put it into your current directory and call it `timetracker.org.db`.
+Later you can simply move it to a better, safer place. This single file contains all
+your punch data.
 
-Place the single `p` (or `p.exe`) binary somewhere in your path.
+Place the `p` (or `p.exe` on Windows) binary somewhere in your path.
 
-Create a file `.punch.yaml` in your home directory with this contents (customize at will!):
+Create a config file (you need this) in either the current directory (`.`), in `~/.config`,
+or on Windows in your home directory (%USERPROFILE%).
 
-    
-    clockfile: /home/megapatch/timetracker.org.db
-    verbose: false
+The config file is named `punch.toml`. You can start with this contents (customize at will!):
+
+    clockfile = "timetracker.org.db" # current directory
+    #OR FOR EXAMPLE: clockfile = "/home/jramb/.time/timetracker.org.db" 
+    debug = false
+
+    [show]
+    rounding = "30m"        # default is "1m"
+    bias = "5m"             # default is "0m"
+    display-rounding = true # default is false
+
+Alternatively use the YAML format: `.config/punch.yaml`:
+
+    clockfile: timetracker.org.db
+    debug: false
     show:
       rounding: 30m
+      bias: 5m
       display-rounding: true
+
 
 The DB file needs to be created before use, call this:
 
