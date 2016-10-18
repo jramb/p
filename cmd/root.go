@@ -91,7 +91,7 @@ func initConfig() {
 	viper.AddConfigPath("$HOME/.config")                            //config directory
 	viper.AddConfigPath("$HOME")                                    // adding home directory as first search path
 	if userprofile := os.Getenv("USERPROFILE"); userprofile != "" { //Windows
-		viper.AddConfigPath(os.Getenv(userprofile))
+		viper.AddConfigPath(userprofile)
 	}
 	//viper.AutomaticEnv()         // read in environment variables that match
 
