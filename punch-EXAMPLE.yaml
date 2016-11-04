@@ -4,3 +4,4 @@ show:
   rounding: 30m
   bias: 5m
   display-rounding: true
+  style: time

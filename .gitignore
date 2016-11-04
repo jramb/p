@@ -25,3 +25,6 @@ p
 *.prof
 
 timetracker.org.db
+
+punch.toml
+punch.yaml

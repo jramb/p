@@ -6,4 +6,5 @@ debug = false
 rounding = "30m"        # default is "1m"
 bias = "5m"             # default is "0m"
 display-rounding = true # default is false
+#style="time"
 
