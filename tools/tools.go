@@ -1,5 +1,11 @@
 package tools
 
+/**
+*
+* 2016 by J Ramb
+*
+**/
+
 import (
 	"bufio"
 	"database/sql"
@@ -37,7 +43,7 @@ var all = flag.Bool("a", false, "show all")
 type lineType int
 type RowId int64
 
-type myDuration time.Duration
+//type myDuration time.Duration
 
 const (
 	header lineType = iota
@@ -75,20 +81,26 @@ func d(args ...interface{}) {
 These are only to be able to log what is being executed
 */
 
+/*
 func (d myDuration) String() string {
-	var sign string
-	if d < 0 {
-		sign = "-"
-		d = -d
+	if viper.GetString("durationStyle") == "time" {
+		var sign string
+		if d < 0 {
+			sign = "-"
+			d = -d
+		}
+		td := time.Duration(d)
+		mins := (td / time.Minute) % 60
+		hours := (td - mins*time.Minute) / time.Hour
+		return fmt.Sprintf("%s%d:%02d", sign, hours, mins)
+	} else {
+		hours := time.Duration(d).Minutes() / 60.
+		return fmt.Sprintf("%3.1fh", hours)
 	}
-	ds := time.Duration(d).String()
-	_ = ds
-	mins := (time.Duration(d) / time.Minute) % 60
-	hours := (time.Duration(d) - mins*time.Minute) / time.Hour
-	return fmt.Sprintf("%s%d:%02d", sign, hours, mins)
 	//return fmt.Sprintf("%4d:%02d %s", hours, mins, ds)
 	//return strings.Replace(ds, "m0s", "m", 1)
 }
+*/
 
 func dbDebug(action string, elapsed time.Duration, query string, args ...interface{}) {
 	d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset)
@@ -778,9 +790,9 @@ func Running(db *sql.DB, argv []string, extra string, effectiveTimeNow time.Time
 		var handle string
 		rows.Scan(&start, &header, &handle)
 		if handle != "" {
-			fmt.Printf(chalk.Green.Color("@%s: ")+chalk.Magenta.Color("%s%s")+"\n", handle, myDuration(effectiveTimeNow.Sub(start)), extra)
+			fmt.Printf(chalk.Green.Color("@%s: ")+chalk.Magenta.Color("%s%s")+"\n", handle, formatDuration(effectiveTimeNow.Sub(start)), extra)
 		} else {
-			fmt.Printf(chalk.Green.Color("%s: ")+chalk.Magenta.Color("%s%s")+"\n", header, myDuration(effectiveTimeNow.Sub(start)), extra)
+			fmt.Printf(chalk.Green.Color("%s: ")+chalk.Magenta.Color("%s%s")+"\n", header, formatDuration(effectiveTimeNow.Sub(start)), extra)
 		}
 	}
 }
@@ -808,25 +820,46 @@ and lower(log_text) like lower('%'||?||'%')
 	return nil
 }
 
-func formatRoundErr(rounderr time.Duration) string {
-	if viper.GetBool("show.display-rounding") {
-		//rounderr = -rounderr
-		if rounderr >= 0 {
-			return fmt.Sprintf("  +%s", myDuration(rounderr))
-		} else {
-			return fmt.Sprintf("  %s", myDuration(rounderr))
-		}
-	} else {
-		return ""
-	}
-}
-
 func DurationRound(unrounded time.Duration, rnd time.Duration, bias time.Duration) time.Duration {
 	var zero time.Time // zero.IsZero!
 	if bias > rnd/2 {
 		bias = rnd / 2
 	}
 	return zero.Add(unrounded).Add(bias).Round(rnd).Sub(zero)
+}
+
+func formatDuration(d time.Duration) string {
+	if viper.GetString("show.style") == "time" {
+		var sign string
+		if d < 0 {
+			sign = "-"
+			d = -d
+		}
+		mins := (d / time.Minute) % 60
+		hours := (d - mins*time.Minute) / time.Hour
+		return fmt.Sprintf("%s%d:%02d", sign, hours, mins)
+	} else {
+		hours := time.Duration(d).Minutes() / 60.
+		return fmt.Sprintf("%3.1f h", hours)
+	}
+}
+
+func formatRoundErr(rounderr time.Duration) string {
+	if viper.GetBool("show.display-rounding") {
+		if viper.GetString("show.style") == "time" {
+			//rounderr = -rounderr
+			if rounderr >= 0 {
+				return fmt.Sprintf("  +%s", formatDuration(rounderr))
+			} else {
+				return fmt.Sprintf("  %s", formatDuration(rounderr))
+			}
+		} else {
+			minutes := DurationRound(rounderr, time.Minute, time.Duration(0)) / time.Minute
+			return fmt.Sprintf("%+5dm", minutes)
+		}
+	} else {
+		return ""
+	}
 }
 
 func formatHeader(head, handle string) string {
@@ -875,10 +908,10 @@ order by sum_duration desc
 		diff := dur - rounded
 		dur = rounded
 		rounderr += diff
-		fmt.Printf("%21s%s  %s\n", myDuration(dur), formatRoundErr(diff), formatHeader(head, handle))
+		fmt.Printf("%21s%s  %s\n", formatDuration(dur), formatRoundErr(diff), formatHeader(head, handle))
 		total += dur
 	}
-	fmt.Printf("     Total: %9s%s\n", myDuration(total), formatRoundErr(rounderr))
+	fmt.Printf("     Total: %9s%s\n", formatDuration(total), formatRoundErr(rounderr))
 	return nil
 }
 
@@ -920,10 +953,10 @@ order by start_date asc
 		diff := dur - rounded
 		rounderr += diff
 		dur = rounded
-		fmt.Printf("%s: %9s%s  %s\n", start, myDuration(dur), formatRoundErr(diff), formatHeader(head, handle))
+		fmt.Printf("%s: %9s%s  %s\n", start, formatDuration(dur), formatRoundErr(diff), formatHeader(head, handle))
 		total += dur
 	}
-	fmt.Printf("     Total: %9s%s\n", myDuration(total), formatRoundErr(rounderr))
+	fmt.Printf("     Total: %9s%s\n", formatDuration(total), formatRoundErr(rounderr))
 	return nil
 }
 
