@@ -31,24 +31,34 @@ var docCmd = &cobra.Command{
 	Short: "documentation and tools for punch",
 }
 
+var autocompleteTarget string
+
 // bashCmd represents the bash command
 var bashCmd = &cobra.Command{
-	Use:   "bash-completion",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Use:   "genautocomplete",
+	Short: "Generate bash shell autocompletion for punch",
+	Long: `Generates the autocompletion file for punch.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	sudo p doc genautocomplete
+
+	add --completionfile=/path/to/file to set alternative file-path and name.
+	use --completionfile=- to print to stdout.
+	`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return RootCmd.GenBashCompletion(os.Stdout)
+		//return RootCmd.GenBashCompletion(os.Stdout)
+		if autocompleteTarget == "-" {
+			return RootCmd.GenBashCompletion(os.Stdout)
+		} else {
+			return RootCmd.GenBashCompletionFile(autocompleteTarget)
+		}
 	},
 }
 
 func init() {
 	RootCmd.AddCommand(docCmd)
 	docCmd.AddCommand(bashCmd)
+	//bashCmd.PersistentFlags().StringVarP(&autocompleteTarget, "completionfile	", "", "/etc/bash_completion.d/p", "Autocompletion file")
+	bashCmd.PersistentFlags().StringVarP(&autocompleteTarget, "completionfile	", "", "/usr/share/bash-completion/completions/p", "Autocompletion file")
 
 	// Here you will define your flags and configuration settings.
 
