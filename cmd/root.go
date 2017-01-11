@@ -13,7 +13,7 @@ import (
 var EffectiveTimeNow = time.Now() //.round(time.Minute)
 
 var cfgFile string
-var Clockfile string
+var clockfile string
 var ModifyEffectiveTime time.Duration
 
 var Debug bool
@@ -69,7 +69,7 @@ func init() {
 	// will be global for your application.
 
 	RootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.punch.yaml)")
-	RootCmd.PersistentFlags().StringVarP(&Clockfile, "clockfile", "c", "", "Path to the clockfile = time entry database")
+	RootCmd.PersistentFlags().StringVarP(&clockfile, "clockfile", "c", "", "Path to the clockfile = time entry database")
 	RootCmd.PersistentFlags().BoolVarP(&Debug, "debug", "D", false, "Enables debug output")
 	RootCmd.PersistentFlags().DurationVarP(&ModifyEffectiveTime, "mod", "m", time.Duration(0), "modify effective time (backwards), eg 7m subtracts 7 minutes")
 	// Cobra also supports local flags, which will only run
