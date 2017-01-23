@@ -21,13 +21,23 @@ linux:
 linux-slim:
 	go build --tags "libsqlite3 linux" -o p
 
+server:
+	go run main.go server
 
 rpc:
 	curl http://localhost:8080/rpc \
 		-H "Content-Type: application/json" \
-		-d '{"method": "P.Hello", "params": [{"who": "Jörg"}], "id": 1}' 
+		-d '{"method": "P.Hello", "params": [{"who": "Jörg"}], "id": 1}' | jq
+
+show:
+	curl http://localhost:8080/rpc \
+		-H "Content-Type: application/json" \
+		-d '{"method": "P.Show", "params": [{"timeFrame": "week"}], "id": 1}' | jq
 
 
 #
 #env CGO_ENABLED=1 GOOS=windows GOARCH=386 CC=i686-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp go install github.com/mattn/go-sqlite3
 #
+
+.PHONY: server
+

@@ -51,6 +51,14 @@ const (
 	text
 )
 
+type TimeDurationEntry struct {
+	Start    string
+	Head     string
+	Handle   string
+	Depth    int
+	Duration int64
+}
+
 type orgEntry struct {
 	lType       lineType
 	deep        int
@@ -716,13 +724,15 @@ func ShowHeaders(db *sql.DB) error {
 	return nil
 }
 
-func decodeTimeFrame(argv []string) (from, to time.Time, err error) {
-	var str string
+func firstOrEmpty(argv []string) string {
 	if len(argv) > 0 {
-		str = argv[0]
+		return argv[0]
 	} else {
-		str = ""
+		return ""
 	}
+}
+
+func DecodeTimeFrame(str string) (from, to time.Time, err error) {
 	parts := strings.Split(str, `-`)
 	var unit string
 	var x int
@@ -770,7 +780,7 @@ func decodeTimeFrame(argv []string) (from, to time.Time, err error) {
 	return
 }
 
-func timeFrame(from, to *time.Time) string {
+func printTimeFrame(from, to *time.Time) string {
 	if to == nil {
 		return fmt.Sprintf("%s --", simpleDate(*from))
 	} else {
@@ -798,7 +808,7 @@ func Running(db *sql.DB, argv []string, extra string, effectiveTimeNow time.Time
 }
 
 func ListLogEntries(db *sql.DB, argv []string) error {
-	from, to, err := decodeTimeFrame(argv)
+	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
@@ -871,7 +881,7 @@ func formatHeader(head, handle string) string {
 }
 
 func ShowTimes(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) (err error) {
-	from, to, err := decodeTimeFrame(argv)
+	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
@@ -895,7 +905,7 @@ order by sum_duration desc
 	total := time.Duration(0)
 	rounderr := time.Duration(0)
 
-	fmt.Println("Headers:", timeFrame(&from, &to))
+	fmt.Println("Headers:", printTimeFrame(&from, &to))
 	for rows.Next() {
 		var id int
 		var head string
@@ -915,8 +925,42 @@ order by sum_duration desc
 	return nil
 }
 
+func QueryDays(db *sql.DB, from, to time.Time, filter string, rounding time.Duration, bias time.Duration) ([]TimeDurationEntry, error) {
+	rows := dbQ(db.Query, `
+with b as (select h.header, h.handle, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
+from entries e
+join headers h on h.header_id = e.header_id and h.active=1
+where e.end is not null
+and e.start between ? and ?)
+select start_date, header, handle, depth, sum(duration)
+from b
+where lower(header) like lower('%'||?||'%')
+group by header, handle, depth, start_date
+order by start_date asc
+`, from, to, filter)
+	defer rows.Close()
+
+	total := time.Duration(0)
+	rounderr := time.Duration(0)
+
+	ret := make([]TimeDurationEntry, 0, 16)
+
+	for rows.Next() {
+		var e TimeDurationEntry
+		rows.Scan(&e.Start, &e.Head, &e.Handle, &e.Depth, &e.Duration)
+		dur := time.Duration(e.Duration * 1000000000)
+		rounded := DurationRound(dur, rounding, bias)
+		diff := dur - rounded
+		rounderr += diff
+		dur = rounded
+		ret = append(ret, e)
+		total += dur
+	}
+	return ret, nil
+}
+
 func ShowDays(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) error {
-	from, to, err := decodeTimeFrame(argv)
+	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
@@ -940,7 +984,7 @@ order by start_date asc
 	total := time.Duration(0)
 	rounderr := time.Duration(0)
 
-	fmt.Println("Daily:", timeFrame(&from, &to))
+	fmt.Println("Daily:", printTimeFrame(&from, &to))
 	for rows.Next() {
 		var start string
 		var head string
@@ -961,7 +1005,7 @@ order by start_date asc
 }
 
 func ShowOrg(db *sql.DB, argv []string) error {
-	from, to, err := decodeTimeFrame(argv)
+	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
