@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"github.com/satori/go.uuid"
 	"time"
 	// go get github.com/mattn/go-sqlite3
 	_ "github.com/mattn/go-sqlite3"
@@ -211,8 +212,10 @@ func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText
 }
 
 func AddHeader(tx *sql.Tx, header string, handle string, parent RowId, depth int) (RowId, error) {
-	res := dbX(tx.Exec, `insert into headers (header, handle, parent, depth, creation_date, active) values(?,?,?,?,?,1)`,
-		header, handle, parent, depth, time.Now())
+	headerUUUID := uuid.NewV4().String()
+	res := dbX(tx.Exec, `insert into headers (header_uuid, header, handle, parent, depth, creation_date, active)
+	values(?,?,?,?,?,?,1)`,
+		headerUUUID, header, handle, parent, depth, time.Now())
 	rowid, err := res.LastInsertId()
 	if err != nil {
 		return RowId(rowid), err
@@ -222,8 +225,9 @@ func AddHeader(tx *sql.Tx, header string, handle string, parent RowId, depth int
 }
 
 func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
-	_ = dbX(tx.Exec, `insert into entries (header_id, start, end) values(?,?,?)`,
-		headerId, entry.start, entry.end)
+	entryUUID := uuid.NewV4().String()
+	_ = dbX(tx.Exec, `insert into entries (entry_uuid, header_id, start, end) values(?,?,?,?)`,
+		entryUUID,headerId, entry.start, entry.end)
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
 }
 
@@ -272,7 +276,8 @@ func PrepareDB() error {
 	defer db.Close()
 	//fmt.Printf("database type: %T\n", db)
 	_ = dbX(db.Exec, `create table if not exists headers
-	( header_id integer primary key autoincrement
+	( header_id integer primary key autoincrement unique
+	, header_uuid text
 	, handle text
 	, header text
 	, depth int
@@ -281,7 +286,9 @@ func PrepareDB() error {
 	, creation_date datetime
 	)`)
 	_ = dbX(db.Exec, `create table if not exists entries
-	( header_id integer
+	( entry_id integer primary key autoincrement unique
+	, entry_uuid text
+	, header_id integer
 	, start datetime not null
 	, end datetime)`)
 	_ = dbX(db.Exec, `create table if not exists log
