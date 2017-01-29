@@ -5,9 +5,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/jramb/chalk"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/ttacon/chalk"
 )
 
 var EffectiveTimeNow = time.Now() //.round(time.Minute)

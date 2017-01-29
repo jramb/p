@@ -9,21 +9,23 @@ package tools
 import (
 	"bufio"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	//"log"
+	"github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
-	"github.com/satori/go.uuid"
 	"time"
 	// go get github.com/mattn/go-sqlite3
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/ttacon/chalk"
+	//"github.com/ttacon/chalk"
+	"github.com/jramb/chalk"
 )
 
 var orgDateTime = "2006-01-02 Mon 15:04"
@@ -81,8 +83,11 @@ func errCheck(err error, msg string) {
 
 func d(args ...interface{}) {
 	if viper.GetBool("debug") {
-		//log.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
-		fmt.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
+		if viper.GetBool("colour") {
+			fmt.Println(chalk.Cyan.Color(fmt.Sprint(args...)))
+		} else {
+			fmt.Println(fmt.Sprint(args...))
+		}
 	}
 }
 
@@ -112,7 +117,11 @@ func (d myDuration) String() string {
 */
 
 func dbDebug(action string, elapsed time.Duration, query string, args ...interface{}) {
-	d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset)
+	if viper.GetBool("colour") {
+		d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset)
+	} else {
+		d(": [", elapsed, "] \n", " ", args)
+	}
 }
 
 func dbQ(dbF func(string, ...interface{}) (*sql.Rows, error), query string, args ...interface{}) *sql.Rows {
@@ -175,9 +184,11 @@ func getParam(db *sql.DB, param string) string {
 
 func setParam(db *sql.DB, param string, value string) {
 	//log.Print(`in setParam`)
-	//_ := dbX(db.Exec, `insert into params (param, value) values(?,?)`, param, value)
-	//if err != nil {
-	_ = dbX(db.Exec, `update params set value = ? where param= ?`, value, param)
+	res := dbX(db.Exec, `update params set value = ? where param= ?`, value, param)
+	updatedCnt, _ := res.RowsAffected()
+	if updatedCnt == 0 {
+		_ = dbX(db.Exec, `insert into params (param, value) values(?,?)`, param, value)
+	}
 }
 
 func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText string, err error) {
@@ -211,8 +222,14 @@ func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText
 	return
 }
 
+func newUUID() string {
+	//return uuid.NewV4(). String()
+	u := uuid.NewV4()
+	return strings.Trim(base64.URLEncoding.EncodeToString(u.Bytes()), "=")
+}
+
 func AddHeader(tx *sql.Tx, header string, handle string, parent RowId, depth int) (RowId, error) {
-	headerUUUID := uuid.NewV4().String()
+	headerUUUID := newUUID()
 	res := dbX(tx.Exec, `insert into headers (header_uuid, header, handle, parent, depth, creation_date, active)
 	values(?,?,?,?,?,?,1)`,
 		headerUUUID, header, handle, parent, depth, time.Now())
@@ -225,9 +242,9 @@ func AddHeader(tx *sql.Tx, header string, handle string, parent RowId, depth int
 }
 
 func addTime(tx *sql.Tx, entry orgEntry, headerId RowId) {
-	entryUUID := uuid.NewV4().String()
+	entryUUID := newUUID()
 	_ = dbX(tx.Exec, `insert into entries (entry_uuid, header_id, start, end) values(?,?,?,?)`,
-		entryUUID,headerId, entry.start, entry.end)
+		entryUUID, headerId, entry.start, entry.end)
 	//log.Print(fmt.Sprintf("Inserted %s\n", entry))
 }
 
@@ -302,9 +319,34 @@ func PrepareDB() error {
 	, handle text
 	, creation_date datetime not null
   , done_date datetime)`)
-	setParam(db, "version", "4")
+
+	setParam(db, "version", "5")
 	//log.Print(`version=` + getParam(db, `version`))
 	fmt.Println("Initialized database with version", getParam(db, `version`))
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer RollbackOnError(tx)
+
+	rows := dbQ(tx.Query, `select rowid from headers where header_uuid is null`)
+	defer rows.Close()
+	for rows.Next() {
+		var rowid int
+		rows.Scan(&rowid)
+		_ = dbX(tx.Exec, `update headers set header_uuid=? where rowid = ? and header_uuid is null`,
+			newUUID(), rowid)
+	}
+	rowsE := dbQ(tx.Query, `select rowid from entries where entry_uuid is null`)
+	defer rowsE.Close()
+	for rowsE.Next() {
+		var rowid int
+		rowsE.Scan(&rowid)
+		_ = dbX(tx.Exec, `update entries set entry_uuid=? where rowid = ? and entry_uuid is null`,
+			newUUID(), rowid)
+	}
+
 	return nil
 }
 
