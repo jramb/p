@@ -171,7 +171,7 @@ func copyFileContents(src, dst string) (err error) {
 	return
 }
 
-func getParam(db *sql.DB, param string) string {
+func getParam(db *sql.DB, param string, whenNew string) string {
 	rows := dbQ(db.Query, `select value from params where param=?`, param)
 	defer rows.Close()
 	for rows.Next() {
@@ -179,7 +179,7 @@ func getParam(db *sql.DB, param string) string {
 		rows.Scan(&val)
 		return val
 	}
-	return ""
+	return whenNew
 }
 
 func setParam(db *sql.DB, param string, value string) {
@@ -189,6 +189,16 @@ func setParam(db *sql.DB, param string, value string) {
 	if updatedCnt == 0 {
 		_ = dbX(db.Exec, `insert into params (param, value) values(?,?)`, param, value)
 	}
+}
+
+func setParamInt(db *sql.DB, param string, value int) {
+	setParam(db, param, strconv.Itoa(value))
+}
+
+func getParamInt(db *sql.DB, param string, whenNew int) int {
+	p := getParam(db, param, strconv.Itoa(whenNew))
+	v, _ := strconv.Atoi(p)
+	return v
 }
 
 func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText string, err error) {
@@ -285,16 +295,18 @@ func WithTransaction(fn func(*sql.DB, *sql.Tx) error) error {
 	})
 }
 
-func PrepareDB() error {
-	db, err := OpenDB(false)
-	if err != nil {
-		return err
+func PrepareDB(db *sql.DB, tx *sql.Tx) error {
+	oldVersion := getParamInt(db, "version", 0)
+	currentVersion := 6
+	if oldVersion == currentVersion {
+		return nil
 	}
-	defer db.Close()
+
 	//fmt.Printf("database type: %T\n", db)
 	_ = dbX(db.Exec, `create table if not exists headers
 	( header_id integer primary key autoincrement unique
 	, header_uuid text
+	, revision int
 	, handle text
 	, header text
 	, depth int
@@ -305,6 +317,7 @@ func PrepareDB() error {
 	_ = dbX(db.Exec, `create table if not exists entries
 	( entry_id integer primary key autoincrement unique
 	, entry_uuid text
+	, revision int
 	, header_id integer
 	, start datetime not null
 	, end datetime)`)
@@ -320,15 +333,13 @@ func PrepareDB() error {
 	, creation_date datetime not null
   , done_date datetime)`)
 
-	setParam(db, "version", "5")
-	//log.Print(`version=` + getParam(db, `version`))
-	fmt.Println("Initialized database with version", getParam(db, `version`))
-
-	tx, err := db.Begin()
-	if err != nil {
-		return err
+	if oldVersion < 6 && currentVersion >= 6 {
+		_ = dbX(db.Exec, `alter table headers add revision int`)
+		_ = dbX(db.Exec, `alter table entries add revision int`)
 	}
-	defer RollbackOnError(tx)
+
+	setParamInt(db, "version", currentVersion)
+	fmt.Println("Initialized database with version", getParamInt(db, `version`, 0))
 
 	rows := dbQ(tx.Query, `select rowid from headers where header_uuid is null`)
 	defer rows.Close()

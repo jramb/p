@@ -23,6 +23,7 @@ package cmd
 import (
 	//"fmt"
 
+	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 )
@@ -33,8 +34,9 @@ var initializeCmd = &cobra.Command{
 	Short: "Initializes the database",
 	Long:  `This initializes the database, this is only needed once.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		//defer tools.RollbackOnError(tx)
-		return tools.PrepareDB()
+		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
+			return tools.PrepareDB(db, tx)
+		})
 	},
 }
 
