@@ -12,6 +12,9 @@ import:
 win:
 	env CGO_ENABLED=1 GOOS=windows GOARCH=386 CC="i686-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp" go build -o p.exe
 
+test:
+	(cd tools ; go test)
+
 p.exe:
 	go build
 
