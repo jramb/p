@@ -171,8 +171,8 @@ func copyFileContents(src, dst string) (err error) {
 	return
 }
 
-func getParam(db *sql.DB, param string, whenNew string) string {
-	rows := dbQ(db.Query, `select value from params where param=?`, param)
+func GetParam(tx *sql.Tx, param string, whenNew string) string {
+	rows := dbQ(tx.Query, `select value from params where param=?`, param)
 	defer rows.Close()
 	for rows.Next() {
 		var val string
@@ -182,23 +182,77 @@ func getParam(db *sql.DB, param string, whenNew string) string {
 	return whenNew
 }
 
-func setParam(db *sql.DB, param string, value string) {
+func SetParam(tx *sql.Tx, param string, value string) {
 	//log.Print(`in setParam`)
-	res := dbX(db.Exec, `update params set value = ? where param= ?`, value, param)
+	res := dbX(tx.Exec, `update params set value = ? where param= ?`, value, param)
 	updatedCnt, _ := res.RowsAffected()
 	if updatedCnt == 0 {
-		_ = dbX(db.Exec, `insert into params (param, value) values(?,?)`, param, value)
+		_ = dbX(tx.Exec, `insert into params (param, value) values(?,?)`, param, value)
 	}
 }
 
-func setParamInt(db *sql.DB, param string, value int) {
-	setParam(db, param, strconv.Itoa(value))
+func SetParamInt(tx *sql.Tx, param string, value int) {
+	SetParam(tx, param, strconv.Itoa(value))
 }
 
-func getParamInt(db *sql.DB, param string, whenNew int) int {
-	p := getParam(db, param, strconv.Itoa(whenNew))
+func GetParamInt(tx *sql.Tx, param string, whenNew int) int {
+	p := GetParam(tx, param, strconv.Itoa(whenNew))
 	v, _ := strconv.Atoi(p)
 	return v
+}
+
+func GetUncommitted(tx *sql.Tx) (*[]JSONHeader, *[]JSONEntry) {
+	hdrs := make([]JSONHeader, 0, 5)
+	entr := make([]JSONEntry, 0, 10)
+	rh := dbQ(tx.Query, `select header_uuid, header, handle, active, creation_date from headers where revision is null`)
+	defer rh.Close()
+	for rh.Next() {
+		h := JSONHeader{}
+		var active int
+		rh.Scan(&h.UUID, &h.Header, &h.Handle, &active, &h.CreationDate)
+		h.Active = (active > 0)
+		hdrs = append(hdrs, h)
+	}
+	re := dbQ(tx.Query, `select e.entry_uuid, h.header_uuid, e.start, e.end from entries e
+	join headers h on h.header_id = e.header_id
+	where e.revision is null`)
+	defer re.Close()
+	for re.Next() {
+		e := JSONEntry{}
+		re.Scan(&e.UUID, &e.HeaderUUID, &e.Start, &e.End)
+		entr = append(entr, e)
+	}
+
+	return &hdrs, &entr
+}
+
+func CommitRevision(tx *sql.Tx, revision int) error {
+	_ = dbX(tx.Exec, `update headers set revision=? where revision is null`, revision)
+	_ = dbX(tx.Exec, `update entries set revision=? where revision is null`, revision)
+	return nil
+}
+
+func ApplyUpdates(tx *sql.Tx, hdr []JSONHeader, entr []JSONEntry, revision int) error {
+	if len(hdr) == 0 && len(entr) == 0 {
+		return nil
+	}
+	for _, h := range hdr {
+		active := 1
+		if h.Active {
+			active = 0
+		}
+		_ = dbX(tx.Exec, `insert or replace into headers 
+					(header_uuid, header, handle, active, creation_date, revision)
+					values (?, ?, ?, ?, ?)`,
+			h.UUID, h.Header, h.Handle, active, h.CreationDate, revision)
+	}
+	for _, e := range entr {
+		_ = dbX(tx.Exec, `insert or replace into entries
+					(entry_uuid, header_id, start, end, revision)
+					values (?,(select header_id from headers where header_uuid=?),?,?,?)`,
+			e.UUID, e.HeaderUUID, e.Start, e.End, revision)
+	}
+	return nil
 }
 
 func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText string, err error) {
@@ -296,7 +350,7 @@ func WithTransaction(fn func(*sql.DB, *sql.Tx) error) error {
 }
 
 func PrepareDB(db *sql.DB, tx *sql.Tx) error {
-	oldVersion := getParamInt(db, "version", 0)
+	oldVersion := GetParamInt(tx, "version", 0)
 	currentVersion := 6
 	if oldVersion == currentVersion {
 		return nil
@@ -338,15 +392,15 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 		_ = dbX(db.Exec, `alter table entries add revision int`)
 	}
 
-	setParamInt(db, "version", currentVersion)
-	fmt.Println("Initialized database with version", getParamInt(db, `version`, 0))
+	SetParamInt(tx, "version", currentVersion)
+	fmt.Println("Initialized database with version", GetParamInt(tx, `version`, 0))
 
 	rows := dbQ(tx.Query, `select rowid from headers where header_uuid is null`)
 	defer rows.Close()
 	for rows.Next() {
 		var rowid int
 		rows.Scan(&rowid)
-		_ = dbX(tx.Exec, `update headers set header_uuid=? where rowid = ? and header_uuid is null`,
+		_ = dbX(tx.Exec, `update headers set header_uuid=?, revision=null where rowid = ? and header_uuid is null`,
 			newUUID(), rowid)
 	}
 	rowsE := dbQ(tx.Query, `select rowid from entries where entry_uuid is null`)
@@ -354,7 +408,7 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	for rowsE.Next() {
 		var rowid int
 		rowsE.Scan(&rowid)
-		_ = dbX(tx.Exec, `update entries set entry_uuid=? where rowid = ? and entry_uuid is null`,
+		_ = dbX(tx.Exec, `update entries set entry_uuid=?, revision=null where rowid = ? and entry_uuid is null`,
 			newUUID(), rowid)
 	}
 
@@ -729,7 +783,7 @@ func resetDb(tx *sql.Tx) {
 }
 
 func importOrgData(tx *sql.Tx, clockfile string) {
-	headerStack := make([]RowId, 1, 10)
+	headerStack := make([]RowId, 0, 10)
 	c := make(chan orgEntry)
 	go loadOrgFile(clockfile, c)
 	for entry := range c {
