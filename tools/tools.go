@@ -15,13 +15,14 @@ import (
 	"fmt"
 	"io"
 	//"log"
-	"github.com/satori/go.uuid"
-	"github.com/spf13/viper"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/satori/go.uuid"
+	"github.com/spf13/viper"
 	// go get github.com/mattn/go-sqlite3
 	_ "github.com/mattn/go-sqlite3"
 	//"github.com/ttacon/chalk"
@@ -116,12 +117,14 @@ func (d myDuration) String() string {
 }
 */
 
-func dbDebug(action string, elapsed time.Duration, query string, args ...interface{}) {
-	if viper.GetBool("colour") {
-		d(chalk.Green.Color(action)+": [", chalk.Blue, elapsed, chalk.Reset, "] \n", chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset)
-	} else {
-		d(": [", elapsed, "] \n", " ", args)
+func dbDebug(action string, elapsed time.Duration, query string, res *sql.Result, args ...interface{}) {
+	resStr := ""
+	if res != nil {
+		ra, _ := (*res).RowsAffected()
+		resStr = chalk.Magenta.Color(fmt.Sprintf("\n==>%d", ra))
 	}
+	d(chalk.Green.Color(action)+": ["+chalk.Blue.Color(elapsed.String())+"]\n",
+		chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset, resStr)
 }
 
 func dbQ(dbF func(string, ...interface{}) (*sql.Rows, error), query string, args ...interface{}) *sql.Rows {
@@ -129,7 +132,7 @@ func dbQ(dbF func(string, ...interface{}) (*sql.Rows, error), query string, args
 	res, err := dbF(query, args...)
 	errCheck(err, query)
 	elapsed := time.Since(start)
-	dbDebug("db", elapsed, query, args)
+	dbDebug("db", elapsed, query, nil, args)
 	return res
 }
 
@@ -138,7 +141,7 @@ func dbX(dbF func(string, ...interface{}) (sql.Result, error), query string, arg
 	res, err := dbF(query, args...)
 	errCheck(err, query)
 	elapsed := time.Since(start)
-	dbDebug("db", elapsed, query, args)
+	dbDebug("db", elapsed, query, &res, args)
 	return res
 }
 
@@ -245,12 +248,14 @@ func ApplyUpdates(tx *sql.Tx, hdr []JSONHeader, entr []JSONEntry, revision int) 
 					(header_uuid, header, handle, active, creation_date, revision)
 					values (?, ?, ?, ?, ?)`,
 			h.UUID, h.Header, h.Handle, active, h.CreationDate, revision)
+		//log.Println("UpH:", res)
 	}
 	for _, e := range entr {
 		_ = dbX(tx.Exec, `insert or replace into entries
 					(entry_uuid, header_id, start, end, revision)
 					values (?,(select header_id from headers where header_uuid=?),?,?,?)`,
 			e.UUID, e.HeaderUUID, e.Start, e.End, revision)
+		//log.Println("UpE:", res)
 	}
 	return nil
 }
@@ -350,7 +355,7 @@ func WithTransaction(fn func(*sql.DB, *sql.Tx) error) error {
 }
 
 func PrepareDB(db *sql.DB, tx *sql.Tx) error {
-	_ = dbX(db.Exec, `create table if not exists params
+	_ = dbX(tx.Exec, `create table if not exists params
 	(param text,value text, primary key (param))`)
 
 	oldVersion := GetParamInt(tx, "version", 0)
@@ -359,8 +364,8 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 		return nil
 	}
 
-	//fmt.Printf("database type: %T\n", db)
-	_ = dbX(db.Exec, `create table if not exists headers
+	//fmt.Printf("database type: %T\n", tx)
+	_ = dbX(tx.Exec, `create table if not exists headers
 	( header_id integer primary key autoincrement unique
 	, header_uuid text
 	, revision int
@@ -371,16 +376,16 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	, active boolean
 	, creation_date datetime
 	)`)
-	_ = dbX(db.Exec, `create table if not exists entries
+	_ = dbX(tx.Exec, `create table if not exists entries
 	( entry_id integer primary key autoincrement unique
 	, entry_uuid text
 	, revision int
 	, header_id integer
 	, start datetime not null
 	, end datetime)`)
-	_ = dbX(db.Exec, `create table if not exists log
+	_ = dbX(tx.Exec, `create table if not exists log
 	( creation_date datetime, log_text text)`)
-	_ = dbX(db.Exec, `create table if not exists todo
+	_ = dbX(tx.Exec, `create table if not exists todo
 	( todo_id integer primary key autoincrement
 	, title text not null
 	, handle text
@@ -388,8 +393,8 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
   , done_date datetime)`)
 
 	if oldVersion < 6 && currentVersion >= 6 {
-		_ = dbX(db.Exec, `alter table headers add revision int`)
-		_ = dbX(db.Exec, `alter table entries add revision int`)
+		_ = dbX(tx.Exec, `alter table headers add revision int`)
+		_ = dbX(tx.Exec, `alter table entries add revision int`)
 	}
 
 	SetParamInt(tx, "version", currentVersion)
