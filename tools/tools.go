@@ -375,7 +375,7 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
  */
 
 func CloseAll(tx *sql.Tx, effectiveTimeNow time.Time) error {
-	res := dbX(tx.Exec, `update entries set end=? where end is null`, effectiveTimeNow)
+	res := dbX(tx.Exec, `update entries set end=?, revision=null where end is null`, effectiveTimeNow)
 	updatedCnt, err := res.RowsAffected()
 	errCheck(err, `fetching RowsAffected`)
 	if updatedCnt > 0 {
@@ -404,7 +404,7 @@ func modifyOpen(tx *sql.Tx, argv []string, modifyEffectiveTime *time.Duration) {
 		rows.Scan(&start, &rowid)
 		newStart := start.Add(-*modifyEffectiveTime)
 		fmt.Printf("New start: %s (added %s)\n", newStart.Format(timeFormat), *modifyEffectiveTime)
-		_ = dbX(tx.Exec, `update entries set start=? where rowid = ?`, newStart, rowid)
+		_ = dbX(tx.Exec, `update entries set start=?, revision=null where rowid = ?`, newStart, rowid)
 	}
 	if cnt == 0 {
 		fmt.Printf(`Nothing open, maybe modify latest entry? [TODO]`)
@@ -721,7 +721,7 @@ func loadOrgFile(clockfile string, c chan orgEntry) {
 
 func resetDb(tx *sql.Tx) {
 	if !*force {
-		panic("You did not use 'force', aborting")
+		panic("You did not use the 'force', aborting")
 	}
 	fmt.Println("Erasing all data")
 	_ = dbX(tx.Exec, `delete from entries`)
