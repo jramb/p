@@ -350,6 +350,9 @@ func WithTransaction(fn func(*sql.DB, *sql.Tx) error) error {
 }
 
 func PrepareDB(db *sql.DB, tx *sql.Tx) error {
+	_ = dbX(db.Exec, `create table if not exists params
+	(param text,value text, primary key (param))`)
+
 	oldVersion := GetParamInt(tx, "version", 0)
 	currentVersion := 6
 	if oldVersion == currentVersion {
@@ -377,9 +380,6 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	, end datetime)`)
 	_ = dbX(db.Exec, `create table if not exists log
 	( creation_date datetime, log_text text)`)
-	_ = dbX(db.Exec, `create table if not exists params
-	(param text,value text,
-	primary key (param))`)
 	_ = dbX(db.Exec, `create table if not exists todo
 	( todo_id integer primary key autoincrement
 	, title text not null
