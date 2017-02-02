@@ -245,8 +245,8 @@ func ApplyUpdates(tx *sql.Tx, hdr []JSONHeader, entr []JSONEntry, revision int) 
 			active = 0
 		}
 		_ = dbX(tx.Exec, `insert or replace into headers 
-					(header_uuid, header, handle, active, creation_date, revision)
-					values (?, ?, ?, ?, ?)`,
+					(header_uuid, header, handle, active, creation_date, revision, depth, parent)
+					values (?, ?, ?, ?, ?, ?, 0, 0)`,
 			h.UUID, h.Header, h.Handle, active, h.CreationDate, revision)
 		//log.Println("UpH:", res)
 	}
@@ -325,8 +325,9 @@ func GetTx(db *sql.DB) (*sql.Tx, error) {
 func OpenDB(checkExists bool) (*sql.DB, error) {
 	var dbfile string
 	dbfile = viper.GetString("clockfile")
+	force := viper.GetBool("force")
 	d("clockfile=" + dbfile)
-	if checkExists || dbfile == "" {
+	if !force && (checkExists || dbfile == "") {
 		if _, err := os.Stat(dbfile); os.IsNotExist(err) {
 			return nil, fmt.Errorf("Could not find your clockfile, please verify setup in your configuration\n*** %s %s", err, dbfile)
 		}
@@ -350,7 +351,15 @@ func WithTransaction(fn func(*sql.DB, *sql.Tx) error) error {
 			return err
 		}
 		defer RollbackOnError(tx)
-		return fn(db, tx)
+		autoSync := viper.GetBool("timeserver.autosync")
+		if autoSync {
+			//FIXME
+		}
+		r := fn(db, tx)
+		if autoSync {
+			//FIXME
+		}
+		return r
 	})
 }
 
@@ -359,10 +368,7 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	(param text,value text, primary key (param))`)
 
 	oldVersion := GetParamInt(tx, "version", 0)
-	currentVersion := 6
-	if oldVersion == currentVersion {
-		return nil
-	}
+	currentVersion := 7
 
 	//fmt.Printf("database type: %T\n", tx)
 	_ = dbX(tx.Exec, `create table if not exists headers
@@ -383,19 +389,24 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	, header_id integer
 	, start datetime not null
 	, end datetime)`)
-	_ = dbX(tx.Exec, `create table if not exists log
-	( creation_date datetime, log_text text)`)
+	_ = dbX(tx.Exec, `create table if not exists log ( creation_date datetime, log_text text)`)
 	_ = dbX(tx.Exec, `create table if not exists todo
 	( todo_id integer primary key autoincrement
 	, title text not null
 	, handle text
 	, creation_date datetime not null
   , done_date datetime)`)
+	_ = dbX(tx.Exec, `create unique index if not exists headers_u1 on headers (header_uuid)`)
+	_ = dbX(tx.Exec, `create unique index if not exists entries_u1 on entries (entry_uuid)`)
 
-	if oldVersion < 6 && currentVersion >= 6 {
-		_ = dbX(tx.Exec, `alter table headers add revision int`)
-		_ = dbX(tx.Exec, `alter table entries add revision int`)
+	if oldVersion == currentVersion {
+		return nil
 	}
+
+	//if oldVersion < 6 && currentVersion >= 6 {
+	//_ = dbX(tx.Exec, `alter table headers add revision int`)
+	//_ = dbX(tx.Exec, `alter table entries add revision int`)
+	//}
 
 	SetParamInt(tx, "version", currentVersion)
 	fmt.Println("Initialized database with version", GetParamInt(tx, `version`, 0))
@@ -1088,15 +1099,15 @@ func ShowDays(db *sql.DB, argv []string, rounding time.Duration, bias time.Durat
 		filter = argv[1]
 	}
 	rows := dbQ(db.Query, `
-with b as (select h.header, h.handle, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
+with b as (select h.header, h.handle, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
 where e.end is not null
 and e.start between ? and ?)
-select start_date, header, handle, depth, sum(duration)
+select start_date, header, handle, sum(duration)
 from b
 where lower(header) like lower('%'||?||'%')
-group by header, handle, depth, start_date
+group by header, handle, start_date
 order by start_date asc
 `, from, to, filter)
 	defer rows.Close()
@@ -1108,9 +1119,8 @@ order by start_date asc
 		var start string
 		var head string
 		var handle string
-		var depth int
 		var duration int64
-		rows.Scan(&start, &head, &handle, &depth, &duration)
+		rows.Scan(&start, &head, &handle, &duration)
 		dur := time.Duration(duration * 1000000000)
 		rounded := DurationRound(dur, rounding, bias)
 		diff := dur - rounded

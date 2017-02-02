@@ -24,8 +24,10 @@ import (
 	//"fmt"
 
 	"database/sql"
+
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // initializeCmd represents the initialize command
@@ -41,5 +43,7 @@ var initializeCmd = &cobra.Command{
 }
 
 func init() {
+	initializeCmd.Flags().BoolP("force", "f", false, "Force the matter")
+	viper.BindPFlag("force", initializeCmd.Flags().Lookup("force"))
 	RootCmd.AddCommand(initializeCmd)
 }

@@ -60,42 +60,44 @@ func contactTimeServer(args SyncArgs) (*SyncReply, error) {
 	return &result, nil
 }
 
+func performSync(db *sql.DB, tx *sql.Tx) error {
+	args := SyncArgs{
+		Owner:    viper.GetString("timeserver.owner"),
+		Key:      viper.GetString("timeserver.key"),
+		Revision: tools.GetParamInt(tx, "revision", 0),
+	}
+	args.Headers, args.Entries = tools.GetUncommitted(tx)
+
+	reply, err := contactTimeServer(args)
+	if err != nil {
+		return err
+	}
+
+	if reply.Revision > 0 {
+		if err := tools.ApplyUpdates(tx, reply.Headers, reply.Entries, reply.Revision); err != nil {
+			return err
+		}
+
+		if err := tools.CommitRevision(tx, reply.Revision); err != nil {
+			return err
+		}
+
+		tools.SetParamInt(tx, "revision", reply.Revision)
+	}
+
+	fmt.Printf("Synced revision %d, push %d/%d, fetched %d/%d\n",
+		reply.Revision, len(*args.Headers), len(*args.Entries),
+		len(reply.Headers), len(reply.Entries))
+	return nil
+}
+
 // syncCmd represents the show command
 var syncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "sync with punch time server",
 	Long:  `Currently this is internal/test functionality`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
-			args := SyncArgs{
-				Owner:    viper.GetString("timeserver.owner"),
-				Key:      viper.GetString("timeserver.key"),
-				Revision: tools.GetParamInt(tx, "revision", 0),
-			}
-			args.Headers, args.Entries = tools.GetUncommitted(tx)
-
-			reply, err := contactTimeServer(args)
-			if err != nil {
-				return err
-			}
-
-			if reply.Revision > 0 {
-				if err := tools.ApplyUpdates(tx, reply.Headers, reply.Entries, reply.Revision); err != nil {
-					return err
-				}
-
-				if err := tools.CommitRevision(tx, reply.Revision); err != nil {
-					return err
-				}
-
-				tools.SetParamInt(tx, "revision", reply.Revision)
-			}
-
-			fmt.Printf("Synced revision %d, push %d/%d, fetched %d/%d\n",
-				reply.Revision, len(*args.Headers), len(*args.Entries),
-				len(reply.Headers), len(reply.Entries))
-			return nil
-		})
+		return tools.WithTransaction(performSync)
 	},
 }
 
