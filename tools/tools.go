@@ -207,18 +207,21 @@ func GetParamInt(tx *sql.Tx, param string, whenNew int) int {
 func GetUncommitted(tx *sql.Tx) (*[]JSONHeader, *[]JSONEntry) {
 	hdrs := make([]JSONHeader, 0, 5)
 	entr := make([]JSONEntry, 0, 10)
-	rh := dbQ(tx.Query, `select header_uuid, header, handle, active, creation_date from headers where revision is null`)
+	rh := dbQ(tx.Query, `select header_uuid, header, handle, active, creation_date from headers where coalesce(revision,'')=''`)
 	defer rh.Close()
 	for rh.Next() {
 		h := JSONHeader{}
-		var active int
-		rh.Scan(&h.UUID, &h.Header, &h.Handle, &active, &h.CreationDate)
-		h.Active = (active > 0)
+		//var active bool // column created as "boolean" -> this works
+		rh.Scan(&h.UUID, &h.Header, &h.Handle, &h.Active, &h.CreationDate)
+		//h.Active = active
+		//h.Active = (active == "true")
+		//fmt.Println("Active:", h.Active)
+		//panic("exit")
 		hdrs = append(hdrs, h)
 	}
 	re := dbQ(tx.Query, `select e.entry_uuid, h.header_uuid, e.start, e.end from entries e
 	join headers h on h.header_id = e.header_id
-	where e.revision is null`)
+	where coalesce(e.revision,'')=''`)
 	defer re.Close()
 	for re.Next() {
 		e := JSONEntry{}
