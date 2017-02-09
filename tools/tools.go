@@ -213,9 +213,6 @@ func GetUncommitted(tx *sql.Tx) (*[]JSONHeader, *[]JSONEntry) {
 		h := JSONHeader{}
 		//var active bool // column created as "boolean" -> this works
 		rh.Scan(&h.UUID, &h.Header, &h.Handle, &h.Active, &h.CreationDate)
-		//h.Active = active
-		//h.Active = (active == "true")
-		//fmt.Println("Active:", h.Active)
 		//panic("exit")
 		hdrs = append(hdrs, h)
 	}
@@ -1148,7 +1145,9 @@ func ShowOrg(db *sql.DB, argv []string) error {
 	hdrs := dbQ(db.Query, `select header_id, header, depth
 	from headers
 	where active=1
-	and lower(header) like lower('%'||?||'%')`, filter)
+	and lower(header) like lower('%'||?||'%')
+	and header_id in (select header_id
+	from entries where start between ? and ?) `, filter, from, to)
 	defer hdrs.Close()
 	for hdrs.Next() {
 		var hid int
