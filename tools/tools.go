@@ -704,7 +704,7 @@ func (oe orgEntry) String() string {
 		ret := fmt.Sprintf("%s CLOCK: [%s]",
 			strings.Repeat(" ", oe.deep),
 			clockText(oe.start))
-		if oe.end != nil {
+		if oe.end != nil && !oe.end.IsZero() {
 			ret = ret + fmt.Sprintf("--[%s] => %s",
 				clockText(oe.end),
 				durationText(oe.duration))
@@ -929,10 +929,18 @@ func Running(db *sql.DB, argv []string, extra string, effectiveTimeNow time.Time
 		var header string
 		var handle string
 		rows.Scan(&start, &header, &handle)
-		if handle != "" {
-			fmt.Printf(chalk.Green.Color("@%s: ")+chalk.Magenta.Color("%s%s")+"\n", handle, formatDuration(effectiveTimeNow.Sub(start)), extra)
+		if viper.GetBool("colour") {
+			if handle != "" {
+				fmt.Printf(chalk.Green.Color("@%s: ")+chalk.Magenta.Color("%s%s")+"\n", handle, formatDuration(effectiveTimeNow.Sub(start)), extra)
+			} else {
+				fmt.Printf(chalk.Green.Color("%s: ")+chalk.Magenta.Color("%s%s")+"\n", header, formatDuration(effectiveTimeNow.Sub(start)), extra)
+			}
 		} else {
-			fmt.Printf(chalk.Green.Color("%s: ")+chalk.Magenta.Color("%s%s")+"\n", header, formatDuration(effectiveTimeNow.Sub(start)), extra)
+			if handle != "" {
+				fmt.Printf("@%s: %s%s\n", handle, formatDuration(effectiveTimeNow.Sub(start)), extra)
+			} else {
+				fmt.Printf("%s: %s%s\n", header, formatDuration(effectiveTimeNow.Sub(start)), extra)
+			}
 		}
 	}
 }
@@ -1098,6 +1106,7 @@ func ShowDays(db *sql.DB, argv []string, rounding time.Duration, bias time.Durat
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
+	//fmt.Println("From, to:", from, to)
 	rows := dbQ(db.Query, `
 with b as (select h.header, h.handle, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
@@ -1107,9 +1116,10 @@ and e.start between ? and ?)
 select start_date, header, handle, sum(duration)
 from b
 where lower(header) like lower('%'||?||'%')
+or '@'||handle = ?
 group by header, handle, start_date
-order by start_date asc
-`, from, to, filter)
+order by header, start_date asc
+`, from, to, filter, filter)
 	defer rows.Close()
 	total := time.Duration(0)
 	rounderr := time.Duration(0)
@@ -1142,18 +1152,18 @@ func ShowOrg(db *sql.DB, argv []string) error {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	hdrs := dbQ(db.Query, `select header_id, header, depth
+	hdrs := dbQ(db.Query, `select header_id, depth, header
 	from headers
 	where active=1
 	and lower(header) like lower('%'||?||'%')
 	and header_id in (select header_id
-	from entries where start between ? and ?) `, filter, from, to)
+	from entries where (start between ? and ? or end is null))`, filter, from, to)
 	defer hdrs.Close()
 	for hdrs.Next() {
 		var hid int
 		var headerTxt string
 		var depth int
-		hdrs.Scan(&hid, &headerTxt, &depth)
+		hdrs.Scan(&hid, &depth, &headerTxt)
 		headEntry := orgEntry{
 			lType:  header,
 			deep:   depth,
@@ -1162,7 +1172,7 @@ func ShowOrg(db *sql.DB, argv []string) error {
 		entr := dbQ(db.Query, `select start, end, strftime('%s',end)-strftime('%s',start) duration
 		from entries
 		where header_id = ?
-		and start between ? and ?
+		and (start between ? and ? or end is null)
 		order by start desc`, hid, from, to)
 		first := true
 		fmt.Printf("%s\n", headEntry)

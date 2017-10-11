@@ -1,7 +1,10 @@
 default: run
 
+show:
+	go run main.go show days week-1
+
 run:
-	go run main.go 
+	go run main.go
 
 install:
 	go install
@@ -32,7 +35,7 @@ rpc:
 		-H "Content-Type: application/json" \
 		-d '{"method": "P.Hello", "params": [{"who": "Jörg"}], "id": 1}' | jq
 
-show:
+show-r:
 	curl http://localhost:8080/rpc \
 		-H "Content-Type: application/json" \
 		-d '{"method": "P.Show", "params": [{"timeFrame": "week"}], "id": 1}' | jq
