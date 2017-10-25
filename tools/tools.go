@@ -1157,7 +1157,8 @@ func ShowOrg(db *sql.DB, argv []string) error {
 	where active=1
 	and lower(header) like lower('%'||?||'%')
 	and header_id in (select header_id
-	from entries where (start between ? and ? or end is null))`, filter, from, to)
+	from entries where
+		(start between ? and ? or (end is null and current_timestamp between ? and ?)))`, filter, from, to, from, to)
 	defer hdrs.Close()
 	for hdrs.Next() {
 		var hid int
@@ -1172,8 +1173,8 @@ func ShowOrg(db *sql.DB, argv []string) error {
 		entr := dbQ(db.Query, `select start, end, strftime('%s',end)-strftime('%s',start) duration
 		from entries
 		where header_id = ?
-		and (start between ? and ? or end is null)
-		order by start desc`, hid, from, to)
+		and (start between ? and ? or (end is null and current_timestamp between ? and ?))
+		order by start desc`, hid, from, to, from, to)
 		first := true
 		fmt.Printf("%s\n", headEntry)
 		for entr.Next() {
@@ -1195,6 +1196,55 @@ func ShowOrg(db *sql.DB, argv []string) error {
 			fmt.Printf("%s\n", clockEntry)
 		}
 		entr.Close()
+	}
+	return nil
+}
+
+func ShowLedger(db *sql.DB, argv []string) error {
+	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
+	if err != nil {
+		return err
+	}
+	var filter string
+	if len(argv) > 1 {
+		filter = argv[1]
+	}
+	entr := dbQ(db.Query, `select h.header_id, h.depth, h.header, h.handle, e.start, e.end
+		from entries e
+                join headers h on h.header_id = e.header_id
+		where lower(header) like lower('%'||?||'%')
+		and (start between ? and ? or (end is null and current_timestamp between ? and ?))
+		order by start asc`, filter, from, to, from, to)
+	defer entr.Close()
+	for entr.Next() {
+		var start *time.Time
+		var end *time.Time
+		var hid int
+		var depth int
+		var headerTxt string
+		var handle *string
+		entr.Scan(&hid, &depth, &headerTxt, &handle, &start, &end)
+		if start == nil {
+			fmt.Printf(";Error %s -- %s %s\n", start, end, headerTxt)
+		} else if end != nil && start.After(*end) {
+			if handle != nil {
+				fmt.Printf(";i %s %s  %s\n", start.Format(isoDateTime), headerTxt, *handle)
+			} else {
+				fmt.Printf(";i %s %s\n", start.Format(isoDateTime), headerTxt)
+			}
+			if end != nil {
+				fmt.Printf(";o %s\n", end.Format(isoDateTime))
+			}
+		} else {
+			if handle != nil {
+				fmt.Printf("i %s %s  %s\n", start.Format(isoDateTime), headerTxt, *handle)
+			} else {
+				fmt.Printf("i %s %s\n", start.Format(isoDateTime), headerTxt)
+			}
+			if end != nil {
+				fmt.Printf("o %s\n", end.Format(isoDateTime))
+			}
+		}
 	}
 	return nil
 }
