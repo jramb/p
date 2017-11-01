@@ -24,6 +24,8 @@ import (
 	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"time"
 )
 
 // printCmd represents the print command
@@ -34,8 +36,7 @@ var ledgerCmd = &cobra.Command{
 one line per entry. The format is compatible with Ledger-cli.org `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
-			tools.ShowLedger(db, args)
-			return nil
+			return tools.ShowLedger(db, args, viper.GetDuration("show.rounding"), viper.GetDuration("show.bias"))
 		})
 	},
 }
@@ -43,14 +44,13 @@ one line per entry. The format is compatible with Ledger-cli.org `,
 func init() {
 	RootCmd.AddCommand(ledgerCmd)
 
-	// Here you will define your flags and configuration settings.
+	ledgerCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
+	ledgerCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")
+	// ledgerCmd.PersistentFlags().BoolVarP(&ShowRounding, "display-rounding", "r", false, "display rounding difference in output")
+	// ledgerCmd.PersistentFlags().StringVarP(&DurationStyle, "style", "", "hour", "show duration style: time / hour")
 
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// printCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// printCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-
+	viper.BindPFlag("show.rounding", ledgerCmd.PersistentFlags().Lookup("rounding"))
+	// viper.BindPFlag("show.style", ledgerCmd.PersistentFlags().Lookup("style"))
+	viper.BindPFlag("show.bias", ledgerCmd.PersistentFlags().Lookup("bias"))
+	viper.BindPFlag("show.display-rounding", ledgerCmd.PersistentFlags().Lookup("display-rounding"))
 }

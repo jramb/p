@@ -34,7 +34,7 @@ var showCmd = &cobra.Command{
 	Use:   "show", // aka "sum"
 	Short: "shows the time entries in various formats",
 	Long: `Shows the time entries in various different formats.
-	
+
 Most commands take an additional time-frame parameter:
 week        = current week
 month       = current month
@@ -76,11 +76,6 @@ var showDaysCmd = &cobra.Command{
 		})
 	},
 }
-
-var RoundTime time.Duration
-var RoundingBias time.Duration // rounding modifier should not be more then half the RoundTime
-var ShowRounding bool
-var DurationStyle string
 
 func init() {
 	RootCmd.AddCommand(showCmd)

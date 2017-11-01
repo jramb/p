@@ -973,6 +973,7 @@ func DurationRound(unrounded time.Duration, rnd time.Duration, bias time.Duratio
 	if bias > rnd/2 {
 		bias = rnd / 2
 	}
+	// a simple unrounded.Round(rnd) would not consider bias
 	return zero.Add(unrounded).Add(bias).Round(rnd).Sub(zero)
 }
 
@@ -1200,7 +1201,7 @@ func ShowOrg(db *sql.DB, argv []string) error {
 	return nil
 }
 
-func ShowLedger(db *sql.DB, argv []string) error {
+func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) (err error) {
 	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
 	if err != nil {
 		return err
@@ -1227,15 +1228,11 @@ func ShowLedger(db *sql.DB, argv []string) error {
 		if start == nil {
 			fmt.Printf(";Error %s -- %s %s\n", start, end, headerTxt)
 		} else if end != nil && start.After(*end) {
-			if handle != nil {
-				fmt.Printf(";i %s %s  %s\n", start.Format(isoDateTime), headerTxt, *handle)
-			} else {
-				fmt.Printf(";i %s %s\n", start.Format(isoDateTime), headerTxt)
-			}
-			if end != nil {
-				fmt.Printf(";o %s\n", end.Format(isoDateTime))
-			}
-		} else {
+			dur := end.Sub(*start)
+			fmt.Printf("%s (%s) %s\n", start.Format(simpleDateFormat), "", *handle)
+			fmt.Printf("    ; %s -- %s\n", start.Format(isoDateTime), end.Format(isoDateTime))
+			fmt.Printf("    (%s)   %ds\n", headerTxt, int64(dur/time.Second))
+		} else { // end == nil or start<end (normal)
 			if handle != nil {
 				fmt.Printf("i %s %s  %s\n", start.Format(isoDateTime), headerTxt, *handle)
 			} else {
@@ -1243,6 +1240,13 @@ func ShowLedger(db *sql.DB, argv []string) error {
 			}
 			if end != nil {
 				fmt.Printf("o %s\n", end.Format(isoDateTime))
+				dur := end.Sub(*start) // should be >=0 now
+				rounded := DurationRound(dur, rounding, bias)
+				roundval := time.Duration(rounded - dur)
+				if roundval > time.Minute || roundval < -time.Minute {
+					fmt.Printf("%s (%s) %s\n", start.Format(simpleDateFormat), "", *handle)
+					fmt.Printf("    (%s)   %ds\n", headerTxt, int64(roundval/time.Second))
+				}
 			}
 		}
 	}

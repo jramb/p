@@ -28,7 +28,13 @@ import (
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"time"
 )
+
+var RoundTime time.Duration
+var RoundingBias time.Duration // rounding modifier should not be more then half the RoundTime
+var ShowRounding bool
+var DurationStyle string
 
 // initializeCmd represents the initialize command
 var initializeCmd = &cobra.Command{
