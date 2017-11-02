@@ -1244,8 +1244,14 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
 				rounded := DurationRound(dur, rounding, bias)
 				roundval := time.Duration(rounded - dur)
 				if roundval > time.Minute || roundval < -time.Minute {
-					fmt.Printf("%s (%s) %s\n", start.Format(simpleDateFormat), "", *handle)
-					fmt.Printf("    (%s)   %ds\n", headerTxt, int64(roundval/time.Second))
+					if handle != nil {
+						fmt.Printf("%s %s\n", start.Format(simpleDateFormat), "rounding")
+						// fmt.Printf("%s (%s) %s\n", start.Format(simpleDateFormat), "rounding", *handle)
+					} else {
+						fmt.Printf("%s (%s)\n", start.Format(simpleDateFormat), "rounding")
+					}
+					fmt.Printf("    (%s)  %ds\n", headerTxt, int64(roundval/time.Second))
+					// fmt.Printf("    %s:Rounding   %ds\n", headerTxt, -int64(roundval/time.Second))
 				}
 			}
 		}
