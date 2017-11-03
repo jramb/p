@@ -1030,7 +1030,7 @@ func ShowTimes(db *sql.DB, timeFrame string, argv []string, rounding time.Durati
 	}
 	rows := dbQ(db.Query, `
 select rowid, header, handle, depth,
-  (select sum(strftime('%s',ifnull(end,current_timestamp))-strftime('%s',start)) sum_duration
+  (select sum(strftime('%s',coalesce(end,current_timestamp))-strftime('%s',start)) sum_duration
 	from entries e
 	where e.header_id = h.header_id
   and start between ? and ?) sum_duration
@@ -1109,7 +1109,7 @@ func ShowDays(db *sql.DB, timeFrame string, argv []string, rounding time.Duratio
 	}
 	//fmt.Println("From, to:", from, to)
 	rows := dbQ(db.Query, `
-with b as (select h.header, h.handle, date(start) start_date, (strftime('%s',ifnull(end,current_timestamp))-strftime('%s',start)) duration
+with b as (select h.header, h.handle, date(start) start_date, (strftime('%s',coalesce(end,current_timestamp))-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
 where 1=1 --e.end is not null
@@ -1243,7 +1243,7 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
 				dur := end.Sub(*start) // should be >=0 now
 				rounded := DurationRound(dur, rounding, bias)
 				roundval := time.Duration(rounded - dur)
-				if roundval > time.Minute || roundval < -time.Minute {
+				if roundval >= time.Minute || roundval <= -time.Minute {
 					if handle != nil {
 						fmt.Printf("%s %s\n", start.Format(simpleDateFormat), "rounding")
 						// fmt.Printf("%s (%s) %s\n", start.Format(simpleDateFormat), "rounding", *handle)
