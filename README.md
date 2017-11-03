@@ -214,6 +214,39 @@ that durations are always rounded up to the nearest rounding factor.  A bias of
 `0m` is fair in the long run, everything in between is a negotiation. Punch will not
 use a bias larger than half the rounding.
 
+### Ledger
+
+Now `p` contains a function to export the time in a format compatible with the wonderful http://ledger-cli.org
+tool. As `ledger` is not only an accounting tool, but a commodity and time tracking analyzer, this
+is a match made in heaven.
+
+Once exported (or by just piping the output to ledger) you can use ledgers full reporting functionality
+including "balances" and register extracts for hierarchical reporting.
+To support this it is recommended that you name your headers in the ledger style: levels separated by `:`.
+
+Example of usage:
+
+    p ledger year | ledger -f - bal
+
+gives maybe something like this:
+
+                278.00h  Familiy time
+                271.00h  Customer 1
+                122.00h    Development
+                149.00h    Documentation
+                  2.50h  Internal:Expense reporting
+                 20.00h  Privat:Lunchtime
+                270.50h  Customer 2:Development
+                741.50h  Hobby
+                660.00h    Oil painting
+                 88.00h    Cleaning
+    --------------------
+               1583.50h
+
+Rounding is applied in each period but reported separated in the ledger output.
+
+(`ledger-cli` gives so excellent reporting possibilities that I see not much
+reason to work on punches own reporting in much more detail.)
 
 ### TODO handling
 Punch contains a very simple TODO handler. It is not at all meant to be comprehensiv,
