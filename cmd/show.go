@@ -55,7 +55,8 @@ var showSumCmd = &cobra.Command{
 	Long:  `Summarizes the times over a period of time. Shows the sum for each header.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
-			return tools.ShowTimes(db, args, viper.GetDuration("show.rounding"), viper.GetDuration("show.bias"))
+			timeFrame := tools.FirstOrEmpty(args)
+			return tools.ShowTimes(db, timeFrame, args, viper.GetDuration("show.rounding"), viper.GetDuration("show.bias"))
 		})
 	},
 }
@@ -67,12 +68,27 @@ var showDaysCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
 			bias := viper.GetDuration("show.bias")
-			if err := tools.ShowDays(db, args, viper.GetDuration("show.rounding"), bias); err != nil {
+			timeFrame := tools.FirstOrEmpty(args)
+			if err := tools.ShowDays(db, timeFrame, args, viper.GetDuration("show.rounding"), bias); err != nil {
 				return err
 			}
 			//tools.Running(db, args, "", GetEffectiveTime())
 			fmt.Println("=================================")
-			return tools.ShowTimes(db, args, viper.GetDuration("show.rounding"), bias)
+			return tools.ShowTimes(db, timeFrame, args, viper.GetDuration("show.rounding"), bias)
+		})
+	},
+}
+
+var todayCmd = &cobra.Command{
+	Use:   "now",
+	Short: "show todays time entries",
+	Long: `shows todays time entries.
+This is the same as "show sum today.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tools.WithOpenDB(true, func(db *sql.DB) error {
+			bias := viper.GetDuration("show.bias")
+			return tools.ShowTimes(db, "today", args, viper.GetDuration("show.rounding"), bias)
+			// return tools.ShowDays(db, "today", args, viper.GetDuration("show.rounding"), bias)
 		})
 	},
 }
@@ -91,4 +107,16 @@ func init() {
 	viper.BindPFlag("show.style", showCmd.PersistentFlags().Lookup("style"))
 	viper.BindPFlag("show.bias", showCmd.PersistentFlags().Lookup("bias"))
 	viper.BindPFlag("show.display-rounding", showCmd.PersistentFlags().Lookup("display-rounding"))
+
+	RootCmd.AddCommand(todayCmd)
+
+	todayCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
+	todayCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")
+	todayCmd.PersistentFlags().BoolVarP(&ShowRounding, "display-rounding", "r", false, "display rounding difference in output")
+	todayCmd.PersistentFlags().StringVarP(&DurationStyle, "style", "", "hour", "show duration style: time / hour")
+
+	viper.BindPFlag("show.rounding", todayCmd.PersistentFlags().Lookup("rounding"))
+	viper.BindPFlag("show.style", todayCmd.PersistentFlags().Lookup("style"))
+	viper.BindPFlag("show.bias", todayCmd.PersistentFlags().Lookup("bias"))
+	viper.BindPFlag("show.display-rounding", todayCmd.PersistentFlags().Lookup("display-rounding"))
 }

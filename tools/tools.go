@@ -854,7 +854,7 @@ func ShowHeaders(db *sql.DB) error {
 	return nil
 }
 
-func firstOrEmpty(argv []string) string {
+func FirstOrEmpty(argv []string) string {
 	if len(argv) > 0 {
 		return argv[0]
 	} else {
@@ -946,7 +946,7 @@ func Running(db *sql.DB, argv []string, extra string, effectiveTimeNow time.Time
 }
 
 func ListLogEntries(db *sql.DB, argv []string) error {
-	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
+	from, to, err := DecodeTimeFrame(FirstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
@@ -1019,8 +1019,8 @@ func formatHeader(head, handle string) string {
 	}
 }
 
-func ShowTimes(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) (err error) {
-	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
+func ShowTimes(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) (err error) {
+	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
@@ -1030,7 +1030,7 @@ func ShowTimes(db *sql.DB, argv []string, rounding time.Duration, bias time.Dura
 	}
 	rows := dbQ(db.Query, `
 select rowid, header, handle, depth,
-  (select sum(strftime('%s',end)-strftime('%s',start)) sum_duration
+  (select sum(strftime('%s',ifnull(end,current_timestamp))-strftime('%s',start)) sum_duration
 	from entries e
 	where e.header_id = h.header_id
   and start between ? and ?) sum_duration
@@ -1098,8 +1098,8 @@ order by start_date asc
 	return ret, nil
 }
 
-func ShowDays(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) error {
-	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
+func ShowDays(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
+	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
@@ -1109,10 +1109,10 @@ func ShowDays(db *sql.DB, argv []string, rounding time.Duration, bias time.Durat
 	}
 	//fmt.Println("From, to:", from, to)
 	rows := dbQ(db.Query, `
-with b as (select h.header, h.handle, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
+with b as (select h.header, h.handle, date(start) start_date, (strftime('%s',ifnull(end,current_timestamp))-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
-where e.end is not null
+where 1=1 --e.end is not null
 and e.start between ? and ?)
 select start_date, header, handle, sum(duration)
 from b
@@ -1145,7 +1145,7 @@ order by header, start_date asc
 }
 
 func ShowOrg(db *sql.DB, argv []string) error {
-	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
+	from, to, err := DecodeTimeFrame(FirstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
@@ -1202,7 +1202,7 @@ func ShowOrg(db *sql.DB, argv []string) error {
 }
 
 func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) (err error) {
-	from, to, err := DecodeTimeFrame(firstOrEmpty(argv))
+	from, to, err := DecodeTimeFrame(FirstOrEmpty(argv))
 	if err != nil {
 		return err
 	}
