@@ -1225,31 +1225,32 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
 		var headerTxt string
 		var handle *string
 		entr.Scan(&hid, &depth, &headerTxt, &handle, &start, &end)
+		var handleStr string
+		if handle != nil {
+			handleStr = "  " + *handle
+		} else {
+			handleStr = ""
+		}
 		if start == nil {
 			fmt.Printf(";Error %s -- %s %s\n", start, end, headerTxt)
-		} else if end != nil && start.After(*end) {
-			dur := end.Sub(*start)
-			fmt.Printf("%s (%s) %s\n", start.Format(simpleDateFormat), "", *handle)
-			fmt.Printf("    ; %s -- %s\n", start.Format(isoDateTime), end.Format(isoDateTime))
-			fmt.Printf("    (%s)   %ds\n", headerTxt, int64(dur/time.Second))
-		} else { // end == nil or start<end (normal)
-			if handle != nil {
-				fmt.Printf("i %s %s  %s\n", start.Format(isoDateTime), headerTxt, *handle)
+		} else {
+			if end == nil {
+				fmt.Printf("i %s %s%s\n", start.Format(isoDateTime), headerTxt, handleStr)
 			} else {
-				fmt.Printf("i %s %s\n", start.Format(isoDateTime), headerTxt)
-			}
-			if end != nil {
-				fmt.Printf("o %s\n", end.Format(isoDateTime))
 				dur := end.Sub(*start) // should be >=0 now
 				rounded := DurationRound(dur, rounding, bias)
 				roundval := time.Duration(rounded - dur)
+				if start.After(*end) { // end<start (ledger can't handle it directly)
+					fmt.Printf("%s (%s)%s\n", start.Format(simpleDateFormat), "", handleStr)
+					fmt.Printf("    ; %s -- %s\n", start.Format(isoDateTime), end.Format(isoDateTime))
+					fmt.Printf("    (%s)   %ds\n", headerTxt, int64(dur/time.Second))
+				} else { // start<end (normal)
+					fmt.Printf("i %s %s%s\n", start.Format(isoDateTime), headerTxt, handleStr)
+					fmt.Printf("o %s\n", end.Format(isoDateTime))
+				}
 				if roundval >= time.Minute || roundval <= -time.Minute {
-					if handle != nil {
-						fmt.Printf("%s %s\n", start.Format(simpleDateFormat), "rounding")
-						// fmt.Printf("%s (%s) %s\n", start.Format(simpleDateFormat), "rounding", *handle)
-					} else {
-						fmt.Printf("%s (%s)\n", start.Format(simpleDateFormat), "rounding")
-					}
+					// fmt.Printf("%s (%s)%s\n", start.Format(simpleDateFormat), "rounding", handleStr)
+					fmt.Printf("%s (%s)%s\n", start.Format(simpleDateFormat), "rounding", "")
 					fmt.Printf("    (%s)  %ds\n", headerTxt, int64(roundval/time.Second))
 					// fmt.Printf("    %s:Rounding   %ds\n", headerTxt, -int64(roundval/time.Second))
 				}
