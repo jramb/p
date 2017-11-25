@@ -79,6 +79,19 @@ var showDaysCmd = &cobra.Command{
 	},
 }
 
+var showWeekCmd = &cobra.Command{
+	Use:   "week",
+	Short: "daily time summary for a week",
+	Long:  `Shows the time entries, in a table for a week.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tools.WithOpenDB(true, func(db *sql.DB) error {
+			bias := viper.GetDuration("show.bias")
+			timeFrame := tools.FirstOrEmpty(args)
+			return tools.ShowWeek(db, timeFrame, args, viper.GetDuration("show.rounding"), bias)
+		})
+	},
+}
+
 var todayCmd = &cobra.Command{
 	Use:   "now",
 	Short: "show todays time entries",
@@ -97,6 +110,7 @@ func init() {
 	RootCmd.AddCommand(showCmd)
 	showCmd.AddCommand(showSumCmd)
 	showCmd.AddCommand(showDaysCmd)
+	showCmd.AddCommand(showWeekCmd)
 
 	showCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
 	showCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")

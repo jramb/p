@@ -1098,8 +1098,59 @@ order by start_date asc
 	return ret, nil
 }
 
-func ShowDays(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
+// type listDays map[int]time.Duration
+type listOfWeekDays [8]time.Duration
+
+type headerDays map[string]*listOfWeekDays
+
+func printWeek(week headerDays) {
+	maxLen := 0
+	var sumDays listOfWeekDays
+	// sumTotal := time.Duration(0)
+	for header, _ := range week {
+		if l := len(header); l > maxLen {
+			maxLen = l
+		}
+	}
+	if maxLen == 0 {
+		return
+	}
+	fmt.Printf("%25s | %6s | %6s | %6s | %6s | %6s | %6s | %6s | %6s\n",
+		"", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "SUM")
+	fmt.Printf("--------------------------+--------+--------+--------+--------+--------+--------+--------+------+\n")
+	for project, times := range week {
+		fmt.Printf("%-25s ", project)
+		// sum := time.Duration(0)
+		for n, v := range times {
+			// sum = sum + v
+			sumDays[n] = sumDays[n] + v
+			// sumTotal = sumTotal + v
+			if v != 0 {
+				fmt.Printf("| %6s ", formatDuration(v))
+			} else {
+				fmt.Printf("| %6s ", "")
+			}
+		}
+		// fmt.Printf("| %6s\n", formatDuration(sum))
+		fmt.Println()
+	}
+	fmt.Printf("--------------------------+--------+--------+--------+--------+--------+--------+--------+------+\n")
+	fmt.Printf("%-25s ", "TOTAL")
+	for _, v := range sumDays {
+		if v != 0 {
+			fmt.Printf("| %6s ", formatDuration(v))
+		} else {
+			fmt.Printf("| %6s ", "")
+		}
+	}
+	fmt.Println()
+
+}
+
+func ShowWeek(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
 	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
+	// days := to.Sub(from) / time.Hour / 24
+	// fmt.Printf("Number days = %d\n", int64(days))
 	if err != nil {
 		return err
 	}
@@ -1109,13 +1160,76 @@ func ShowDays(db *sql.DB, timeFrame string, argv []string, rounding time.Duratio
 	}
 	//fmt.Println("From, to:", from, to)
 	rows := dbQ(db.Query, `
-with b as (select h.header, h.handle, date(start) start_date, (strftime('%s',coalesce(end,current_timestamp))-strftime('%s',start)) duration
+with p as (select ? pfrom, ? pto),
+b as (select h.header, h.handle, date(start) start_date, (strftime('%s',coalesce(end,current_timestamp))-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
+join p
 where 1=1 --e.end is not null
-and e.start between ? and ?)
-select start_date, header, handle, sum(duration)
-from b
+and e.start between p.pfrom and p.pto)
+select start_date, round(julianday(start_date)-julianday(p.pfrom)) diff, header, handle, sum(duration)
+from b, p
+where lower(header) like lower('%'||?||'%')
+or '@'||handle = ?
+group by header, handle, start_date
+order by header, start_date asc
+`, from, to, filter, filter)
+	defer rows.Close()
+	total := time.Duration(0)
+	rounderr := time.Duration(0)
+
+	week := make(headerDays)
+
+	fmt.Println("Week:", printTimeFrame(&from, &to))
+	for rows.Next() {
+		var start string //time.Time //string
+		var offset int   //time.Time //string
+		var head string
+		var handle string
+		var duration int64
+		if error := rows.Scan(&start, &offset, &head, &handle, &duration); error != nil {
+			fmt.Println(error)
+		}
+		dur := time.Duration(duration * 1000000000)
+		rounded := DurationRound(dur, rounding, bias)
+		diff := dur - rounded
+		rounderr += diff
+		dur = rounded
+		if _, ok := week[head]; !ok {
+			week[head] = new(listOfWeekDays)
+		}
+		week[head][offset] = time.Duration(dur)
+		week[head][7] += time.Duration(dur)
+
+		total += dur
+	}
+	printWeek(week)
+	fmt.Printf("     Total: %9s%s\n", formatDuration(total), formatRoundErr(rounderr))
+	return nil
+}
+
+func ShowDays(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
+	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
+	days := to.Sub(from) / time.Hour / 24
+	fmt.Printf("Number days = %d\n", int64(days))
+	if err != nil {
+		return err
+	}
+	var filter string
+	if len(argv) > 1 {
+		filter = argv[1]
+	}
+	//fmt.Println("From, to:", from, to)
+	rows := dbQ(db.Query, `
+with p as (select ? pfrom, ? pto),
+b as (select h.header, h.handle, date(start) start_date, (strftime('%s',coalesce(end,current_timestamp))-strftime('%s',start)) duration
+from entries e
+join headers h on h.header_id = e.header_id and h.active=1
+join p
+where 1=1 --e.end is not null
+and e.start between p.pfrom and p.pto)
+select start_date, round(julianday(start_date)-julianday(p.pfrom)) diff, header, handle, sum(duration)
+from b, p
 where lower(header) like lower('%'||?||'%')
 or '@'||handle = ?
 group by header, handle, start_date
@@ -1127,11 +1241,14 @@ order by header, start_date asc
 
 	fmt.Println("Daily:", printTimeFrame(&from, &to))
 	for rows.Next() {
-		var start string
+		var start string //time.Time //string
+		var offset int   //time.Time //string
 		var head string
 		var handle string
 		var duration int64
-		rows.Scan(&start, &head, &handle, &duration)
+		if error := rows.Scan(&start, &offset, &head, &handle, &duration); error != nil {
+			fmt.Println(error)
+		}
 		dur := time.Duration(duration * 1000000000)
 		rounded := DurationRound(dur, rounding, bias)
 		diff := dur - rounded
