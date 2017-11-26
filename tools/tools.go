@@ -1373,8 +1373,11 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
                 join headers h on h.header_id = e.header_id
 		where lower(header) like lower('%'||?||'%')
 		and (start between ? and ? or (end is null and current_timestamp between ? and ?))
-		order by start asc`, filter, from, to, from, to)
+		order by h.header_id, e.start asc`, filter, from, to, from, to)
 	defer entr.Close()
+	roundDay := ""
+	roundHeader := ""
+	roundDur := time.Duration(0)
 	for entr.Next() {
 		var start *time.Time
 		var end *time.Time
@@ -1392,12 +1395,24 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
 		if start == nil {
 			fmt.Printf(";Error %s -- %s %s\n", start, end, headerTxt)
 		} else {
+			thisDay := start.Format(simpleDateFormat)
+			if !(roundDay == thisDay && roundHeader == headerTxt) {
+				// fmt.Printf("Switch!")
+				// add rounding
+				rounded := DurationRound(roundDur, rounding, bias)
+				roundval := time.Duration(rounded - roundDur)
+				if roundval >= time.Minute || roundval <= -time.Minute {
+					fmt.Printf("%s (%s)%s\n", roundDay, "rounding", "")
+					fmt.Printf("    (%s)  %ds\n", roundHeader, int64(roundval/time.Second))
+				}
+				roundDay = thisDay
+				roundHeader = headerTxt
+				roundDur = time.Duration(0)
+			}
 			if end == nil {
 				fmt.Printf("i %s %s%s\n", start.Format(isoDateTime), headerTxt, handleStr)
 			} else {
 				dur := end.Sub(*start) // should be >=0 now
-				rounded := DurationRound(dur, rounding, bias)
-				roundval := time.Duration(rounded - dur)
 				if start.After(*end) { // end<start (ledger can't handle it directly)
 					fmt.Printf("%s (%s)%s\n", start.Format(simpleDateFormat), "", handleStr)
 					fmt.Printf("    ; %s -- %s\n", start.Format(isoDateTime), end.Format(isoDateTime))
@@ -1406,13 +1421,19 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
 					fmt.Printf("i %s %s%s\n", start.Format(isoDateTime), headerTxt, handleStr)
 					fmt.Printf("o %s\n", end.Format(isoDateTime))
 				}
-				if roundval >= time.Minute || roundval <= -time.Minute {
-					// fmt.Printf("%s (%s)%s\n", start.Format(simpleDateFormat), "rounding", handleStr)
-					fmt.Printf("%s (%s)%s\n", start.Format(simpleDateFormat), "rounding", "")
-					fmt.Printf("    (%s)  %ds\n", headerTxt, int64(roundval/time.Second))
-					// fmt.Printf("    %s:Rounding   %ds\n", headerTxt, -int64(roundval/time.Second))
-				}
+				roundDur += dur
 			}
+		}
+	}
+	// add last rounding as well
+	if roundDur != time.Duration(0) {
+		// fmt.Printf("Switch!")
+		// add rounding
+		rounded := DurationRound(roundDur, rounding, bias)
+		roundval := time.Duration(rounded - roundDur)
+		if roundval >= time.Minute || roundval <= -time.Minute {
+			fmt.Printf("%s (%s)%s\n", roundDay, "rounding", "")
+			fmt.Printf("    (%s)  %ds\n", roundHeader, int64(roundval/time.Second))
 		}
 	}
 	return nil
