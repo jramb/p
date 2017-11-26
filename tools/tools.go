@@ -17,6 +17,7 @@ import (
 	//"log"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1105,37 +1106,74 @@ type headerDays map[string]*listOfWeekDays
 
 func printWeek(week headerDays) {
 	maxLen := 0
+	withSub := viper.GetBool("show.subheaders")
+	// calculate sum of days
 	var sumDays listOfWeekDays
-	// sumTotal := time.Duration(0)
+	for _, days := range week {
+		for n, v := range days {
+			sumDays[n] = sumDays[n] + v
+		}
+	}
+	// find max length of header
 	for header, _ := range week {
-		if l := len(header); l > maxLen {
+		currLen := 0
+		if withSub {
+			headerParts := strings.Split(header, ":")
+			currLen = 2*(len(headerParts)-1) + len(headerParts[len(headerParts)-1]) + 1
+		} else {
+			currLen = len(header) + 1
+		}
+		if l := currLen; l > maxLen {
 			maxLen = l
 		}
 	}
 	if maxLen == 0 {
 		return
 	}
-	fmt.Printf("%25s | %6s | %6s | %6s | %6s | %6s | %6s | %6s | %6s\n",
+	if withSub {
+		// add subtotals  A:B:C -> A:B and A
+		for header, days := range week {
+			headerParts := strings.Split(header, ":")
+			_ = days
+			for i := 1; i < len(headerParts); i++ {
+				subHdr := strings.Join(headerParts[:i], ":")
+				if _, ok := week[subHdr]; !ok {
+					week[subHdr] = new(listOfWeekDays)
+				}
+				for n, v := range days {
+					week[subHdr][n] = week[subHdr][n] + v
+				}
+			}
+		}
+	}
+	hdrFmt := fmt.Sprintf("%%-%ds", maxLen)
+	fmt.Printf(hdrFmt+"| %6s | %6s | %6s | %6s | %6s | %6s | %6s | %6s\n",
 		"", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "SUM")
-	fmt.Printf("--------------------------+--------+--------+--------+--------+--------+--------+--------+------+\n")
-	for project, times := range week {
-		fmt.Printf("%-25s ", project)
-		// sum := time.Duration(0)
-		for n, v := range times {
-			// sum = sum + v
-			sumDays[n] = sumDays[n] + v
-			// sumTotal = sumTotal + v
+	divider := fmt.Sprintf(strings.Repeat("-", maxLen) + strings.Repeat("+--------", 8))
+	fmt.Println(divider)
+	var keys []string
+	for k := range week {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, header := range keys {
+		if withSub {
+			headerParts := strings.Split(header, ":")
+			fmt.Printf(hdrFmt, strings.Repeat("  ", len(headerParts)-1)+headerParts[len(headerParts)-1])
+		} else {
+			fmt.Printf(hdrFmt, header)
+		}
+		for _, v := range week[header] {
 			if v != 0 {
 				fmt.Printf("| %6s ", formatDuration(v))
 			} else {
 				fmt.Printf("| %6s ", "")
 			}
 		}
-		// fmt.Printf("| %6s\n", formatDuration(sum))
 		fmt.Println()
 	}
-	fmt.Printf("--------------------------+--------+--------+--------+--------+--------+--------+--------+------+\n")
-	fmt.Printf("%-25s ", "TOTAL")
+	fmt.Println(divider)
+	fmt.Printf(hdrFmt, "TOTAL")
 	for _, v := range sumDays {
 		if v != 0 {
 			fmt.Printf("| %6s ", formatDuration(v))
@@ -1149,8 +1187,11 @@ func printWeek(week headerDays) {
 
 func ShowWeek(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
 	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
-	// days := to.Sub(from) / time.Hour / 24
-	// fmt.Printf("Number days = %d\n", int64(days))
+	days := to.Sub(from) / time.Hour / 24
+	if days != 7 {
+		fmt.Printf("Number days = %d, currently only single weeks are supported\n", int64(days))
+		return nil
+	}
 	if err != nil {
 		return err
 	}

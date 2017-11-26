@@ -1,7 +1,7 @@
 default: show
 
 show:
-	go run main.go show week week-1
+	go run main.go show week
 
 run:
 	go run main.go

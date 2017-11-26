@@ -115,11 +115,13 @@ func init() {
 	showCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
 	showCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")
 	showCmd.PersistentFlags().BoolVarP(&ShowRounding, "display-rounding", "r", false, "display rounding difference in output")
+	showCmd.PersistentFlags().BoolVarP(&SubHeaders, "subheaders", "s", false, "display subheaders")
 	showCmd.PersistentFlags().StringVarP(&DurationStyle, "style", "", "hour", "show duration style: time / hour")
 
 	viper.BindPFlag("show.rounding", showCmd.PersistentFlags().Lookup("rounding"))
 	viper.BindPFlag("show.style", showCmd.PersistentFlags().Lookup("style"))
 	viper.BindPFlag("show.bias", showCmd.PersistentFlags().Lookup("bias"))
+	viper.BindPFlag("show.subheaders", showCmd.PersistentFlags().Lookup("subheaders"))
 	viper.BindPFlag("show.display-rounding", showCmd.PersistentFlags().Lookup("display-rounding"))
 
 	RootCmd.AddCommand(todayCmd)
