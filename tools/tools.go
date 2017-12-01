@@ -666,6 +666,45 @@ func CheckIn(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Tim
 	return nil
 }
 
+func ChangeCheckIn(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) error {
+	var header string
+
+	if handle == "" {
+		if len(argv) < 1 {
+			return fmt.Errorf("Need a handle (or part of header) to check in")
+		}
+		header = argv[0]
+	}
+	//log.Println("header to check into: " + header)
+	hdr, headerText, err := findHeader(tx, header, handle)
+	if err != nil {
+		return err
+	}
+
+	res := dbX(tx.Exec, `update entries
+set header_id=(select header_id from headers where rowid=?)
+, revision=null
+where end is null`, hdr)
+	updatedCnt, err := res.RowsAffected()
+	errCheck(err, `fetching RowsAffected`)
+	if updatedCnt > 0 {
+		fmt.Println("Switched to " + headerText)
+		// d("Changed entries: ", updatedCnt)
+	}
+	return nil
+
+	// entry := orgEntry{
+	// 	lType: clock,
+	// 	start: &effectiveTimeNow,
+	// 	//end:
+	// 	//duration    time.Duration
+	// 	//depthChange int
+	// }
+	// addTime(tx, entry, hdr)
+	// fmt.Printf("Checked into %s\n", headerText)
+	return nil
+}
+
 func parseDateTime(s string) *time.Time {
 	if s != "" {
 		p, err := time.ParseInLocation(orgDateTime, s, time.Local)
@@ -1264,7 +1303,7 @@ func ShowDays(db *sql.DB, timeFrame string, argv []string, rounding time.Duratio
 	rows := dbQ(db.Query, `
 with p as (select ? pfrom, ? pto),
 b as (select h.header, h.handle, date(start) start_date, (strftime('%s',coalesce(end,current_timestamp))-strftime('%s',start)) duration
-from entries e
+from entriese
 join headers h on h.header_id = e.header_id and h.active=1
 join p
 where 1=1 --e.end is not null
