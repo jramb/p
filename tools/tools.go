@@ -13,6 +13,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/jramb/p/table"
 	"io"
 	//"log"
 	"os"
@@ -1185,43 +1186,56 @@ func printWeek(week headerDays) {
 			}
 		}
 	}
-	hdrFmt := fmt.Sprintf("%%-%ds", maxLen)
-	fmt.Printf(hdrFmt+"| %6s | %6s | %6s | %6s | %6s | %6s | %6s | %6s\n",
-		"", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "SUM")
-	divider := fmt.Sprintf(strings.Repeat("-", maxLen) + strings.Repeat("+--------", 8))
-	fmt.Println(divider)
 	var keys []string
 	for k := range week {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+
+	tab := table.NewTable()
+	row := table.NewRow()
+
+	row = row.Add(table.Cell{"", table.Left})
+	row = row.Add(table.Cell{"Mon", table.Center})
+	row = row.Add(table.Cell{"Tis", table.Center})
+	row = row.Add(table.Cell{"Ons", table.Center})
+	row = row.Add(table.Cell{"Thu", table.Center})
+	row = row.Add(table.Cell{"Fri", table.Center})
+	row = row.Add(table.Cell{"Sat", table.Center})
+	row = row.Add(table.Cell{"Sun", table.Center})
+	row = row.Add(table.Cell{"SUM", table.Center})
+	tab = tab.Add(row)
+	tab = tab.AddDivider()
 	for _, header := range keys {
+		row = table.NewRow()
 		if withSub {
 			headerParts := strings.Split(header, ":")
-			fmt.Printf(hdrFmt, strings.Repeat("  ", len(headerParts)-1)+headerParts[len(headerParts)-1])
+			s := strings.Repeat("  ", len(headerParts)-1) + headerParts[len(headerParts)-1]
+			row = row.Add(table.Cell{s, table.Left})
 		} else {
-			fmt.Printf(hdrFmt, header)
+			row = row.Add(table.Cell{header, table.Left})
 		}
 		for _, v := range week[header] {
 			if v != 0 {
-				fmt.Printf("| %6s ", formatDuration(v))
+				row = row.Add(table.Cell{formatDuration(v), table.Right})
 			} else {
-				fmt.Printf("| %6s ", "")
+				row = row.Add(table.Cell{"", table.Right})
 			}
 		}
-		fmt.Println()
+		tab = tab.Add(row)
 	}
-	fmt.Println(divider)
-	fmt.Printf(hdrFmt, "TOTAL")
+	tab = tab.AddDivider()
+	row = table.NewRow()
+	row = row.Add(table.Cell{"TOTAL", table.Left})
 	for _, v := range sumDays {
 		if v != 0 {
-			fmt.Printf("| %6s ", formatDuration(v))
+			row = row.Add(table.Cell{formatDuration(v), table.Right})
 		} else {
-			fmt.Printf("| %6s ", "")
+			row = row.Add(table.Cell{"", table.Right})
 		}
 	}
-	fmt.Println()
-
+	tab = tab.Add(row)
+	tab.Print()
 }
 
 func ShowWeek(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
@@ -1285,6 +1299,7 @@ order by header, start_date asc
 	}
 	printWeek(week)
 	fmt.Printf("     Total: %9s%s\n", formatDuration(total), formatRoundErr(rounderr))
+
 	return nil
 }
 
