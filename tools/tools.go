@@ -1303,7 +1303,7 @@ func ShowDays(db *sql.DB, timeFrame string, argv []string, rounding time.Duratio
 	rows := dbQ(db.Query, `
 with p as (select ? pfrom, ? pto),
 b as (select h.header, h.handle, date(start) start_date, (strftime('%s',coalesce(end,current_timestamp))-strftime('%s',start)) duration
-from entriese
+from entries e
 join headers h on h.header_id = e.header_id and h.active=1
 join p
 where 1=1 --e.end is not null
@@ -1441,7 +1441,8 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
 				rounded := DurationRound(roundDur, rounding, bias)
 				roundval := time.Duration(rounded - roundDur)
 				if roundval >= time.Minute || roundval <= -time.Minute {
-					fmt.Printf("%s (%s)%s\n", roundDay, "rounding", "")
+					// fmt.Printf("%s (%s)%s\n", roundDay, "rounding", "rounding")
+					fmt.Printf("%s  %s\n", roundDay, "rounding")
 					fmt.Printf("    (%s)  %ds\n", roundHeader, int64(roundval/time.Second))
 				}
 				roundDay = thisDay
