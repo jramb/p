@@ -42,7 +42,7 @@ var headListCmd = &cobra.Command{
 	Long:  `Lists all active headers.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
-			return tools.ShowHeaders(db)
+			return tools.ShowHeaders(db, args)
 		})
 	},
 }
@@ -55,7 +55,7 @@ var headAddCmd = &cobra.Command{
 		return tools.WithTransaction(func(db *sql.DB, tx *sql.Tx) error {
 			handle, args := tools.ParseHandle(args)
 			if _, err := tools.VerifyHandle(db, handle, false); err == nil {
-				return fmt.Errorf("Handler '%s' does already exist!", handle)
+				return fmt.Errorf("handler '%s' does already exist", handle)
 			}
 
 			var dummyRowID tools.RowId

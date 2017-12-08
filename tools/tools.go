@@ -880,17 +880,34 @@ func loadTimeFile(clockfile string,
 	data = doer(data, argv)
 }
 
-func ShowHeaders(db *sql.DB) error {
-	rows := dbQ(db.Query, `select rowid, header, handle, depth from headers where active=1`)
+func nvl(str *string, alt string) string {
+	if str != nil {
+		return *str
+	}
+	return alt
+}
+func ShowHeaders(db *sql.DB, argv []string) error {
+	var filter string
+	if len(argv) > 0 {
+		filter = argv[0]
+	}
+	rows := dbQ(db.Query, `select rowid, header
+, (select count(*)+7 from entries e where e.header_id=h.header_id) cnt
+, handle
+from headers h
+where h.active=1
+and lower(h.header) like lower('%'||?||'%')`, filter)
 	defer rows.Close()
 	for rows.Next() {
 		var id int
 		var head string
-		var handle string
-		var depth int
-		rows.Scan(&id, &head, &handle, &depth)
+		var handle *string
+		var count int
+		rows.Scan(&id, &head, &count, &handle)
 
-		fmt.Printf("[%2d] %s %s\n", id, strings.Repeat("   ", depth), formatHeader(head, handle))
+		fmt.Printf("[%2d] %s  (%d)\n",
+			id, // strings.Repeat("   ", depth),
+			formatHeader(head, nvl(handle, "")), count)
 	}
 	return nil
 }
