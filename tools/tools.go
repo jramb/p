@@ -7,7 +7,6 @@ package tools
 **/
 
 import (
-	"bufio"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -64,19 +63,6 @@ type TimeDurationEntry struct {
 	Depth    int
 	Duration int64
 }
-
-type orgEntry struct {
-	lType       lineType
-	deep        int
-	header      string
-	text        string
-	start       *time.Time
-	end         *time.Time
-	duration    time.Duration
-	depthChange int
-	modified    bool
-}
-type orgData []orgEntry
 
 func errCheck(err error, msg string) {
 	if err != nil {
@@ -247,8 +233,8 @@ func ApplyUpdates(tx *sql.Tx, hdr []JSONHeader, entr []JSONEntry, revision int) 
 			active = 0
 		}
 		_ = dbX(tx.Exec, `insert or replace into headers 
-					(header_uuid, header, handle, active, creation_date, revision, depth, parent)
-					values (?, ?, ?, ?, ?, ?, 0, 0)`,
+					(header_uuid, header, handle, active, creation_date, revision)
+					values (?, ?, ?, ?, ?, ?)`,
 			h.UUID, h.Header, h.Handle, active, h.CreationDate, revision)
 		//log.Println("UpH:", res)
 	}
@@ -299,11 +285,11 @@ func newUUID() string {
 	return strings.Trim(base64.URLEncoding.EncodeToString(u.Bytes()), "=")
 }
 
-func AddHeader(tx *sql.Tx, header string, handle string, parent RowId, depth int) (RowId, error) {
+func AddHeader(tx *sql.Tx, header string, handle string) (RowId, error) {
 	headerUUUID := newUUID()
-	res := dbX(tx.Exec, `insert into headers (header_uuid, header, handle, parent, depth, creation_date, active)
+	res := dbX(tx.Exec, `insert into headers (header_uuid, header, handle, creation_date, active)
 	values(?,?,?,?,?,?,1)`,
-		headerUUUID, header, handle, parent, depth, time.Now())
+		headerUUUID, header, handle, time.Now())
 	rowid, err := res.LastInsertId()
 	if err != nil {
 		return RowId(rowid), err
@@ -370,7 +356,7 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	(param text,value text, primary key (param))`)
 
 	oldVersion := GetParamInt(tx, "version", 0)
-	currentVersion := 7
+	currentVersion := 8
 
 	//fmt.Printf("database type: %T\n", tx)
 	_ = dbX(tx.Exec, `create table if not exists headers
@@ -379,8 +365,6 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	, revision int
 	, handle text
 	, header text
-	, depth int
-	, parent integer
 	, active boolean
 	, creation_date datetime
 	)`)
@@ -432,19 +416,6 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 
 	return nil
 }
-
-/*
- *func closeClockEntry(e *orgEntry) {
- *  if e.lType != clock {
- *    log.Panicf("This is not a clock entry: %v", e)
- *  }
- *  if e.end == nil {
- *    modEnd := effectiveTimeNow
- *    e.end = &modEnd
- *    e.duration = e.end.Sub(*e.start)
- *  }
- *}
- */
 
 func CloseAll(tx *sql.Tx, effectiveTimeNow time.Time) error {
 	res := dbX(tx.Exec, `update entries set end=?, revision=null where end is null`, effectiveTimeNow)
@@ -660,7 +631,6 @@ func CheckIn(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Tim
 		start: &effectiveTimeNow,
 		//end:
 		//duration    time.Duration
-		//depthChange int
 	}
 	addTime(tx, entry, hdr)
 	fmt.Printf("Checked into %s\n", headerText)
@@ -699,7 +669,6 @@ where end is null`, hdr)
 	// 	start: &effectiveTimeNow,
 	// 	//end:
 	// 	//duration    time.Duration
-	// 	//depthChange int
 	// }
 	// addTime(tx, entry, hdr)
 	// fmt.Printf("Checked into %s\n", headerText)
@@ -739,24 +708,6 @@ func durationText(d time.Duration) string {
  *  return durationText(d)
  *}
  */
-
-func (oe orgEntry) String() string {
-	if oe.lType == clock {
-		ret := fmt.Sprintf("%s CLOCK: [%s]",
-			strings.Repeat(" ", oe.deep),
-			clockText(oe.start))
-		if oe.end != nil && !oe.end.IsZero() {
-			ret = ret + fmt.Sprintf("--[%s] => %s",
-				clockText(oe.end),
-				durationText(oe.duration))
-		}
-		return ret
-	} else if oe.lType == header {
-		return fmt.Sprintf("%s %s", strings.Repeat("*", oe.deep), oe.header)
-	} else {
-		return oe.text
-	}
-}
 
 func parseLine(line string, deep int) (entry orgEntry) {
 	var dateMatch = `\d{4}-\d{2}-\d{2}`
@@ -808,31 +759,9 @@ func touchTimeData(data orgData, argv []string) orgData {
 	return data
 }
 
-func loadOrgFile(clockfile string, c chan orgEntry) {
-	//log.Print("loading " + clockfile)
-	//defer func() { close(c) }()
-	defer close(c) //close channel when done
-	cf, err := os.Open(clockfile)
-	errCheck(err, `Could not open file: `+clockfile)
-	defer cf.Close()
-
-	scanner := bufio.NewScanner(cf)
-	currentDeep := 0
-	for scanner.Scan() {
-		line := scanner.Text()
-		entry := parseLine(line, currentDeep)
-		//if entry.lType == header {
-		//fmt.Printf("Current depth %d, new depth %d\n", currentDeep, entry.deep)
-		//}
-		entry.depthChange = entry.deep - currentDeep
-		currentDeep = entry.deep
-		c <- entry
-	}
-}
-
 func resetDb(tx *sql.Tx) {
 	if !*force {
-		panic("You did not use the 'force', aborting")
+		panic("You did not use the force, aborting")
 	}
 	fmt.Println("Erasing all data")
 	_ = dbX(tx.Exec, `delete from entries`)
@@ -842,10 +771,9 @@ func resetDb(tx *sql.Tx) {
 func importOrgData(tx *sql.Tx, clockfile string) {
 	headerStack := make([]RowId, 0, 10)
 	c := make(chan orgEntry)
-	go loadOrgFile(clockfile, c)
+	go LoadOrgFile(clockfile, c)
 	for entry := range c {
 		var err error
-		//fmt.Printf("len=%d, headerStack=%+v, dc=%d\n", len(headerStack), headerStack, entry.depthChange)
 		switch entry.depthChange {
 		case 1:
 			headerStack = append(headerStack, RowId(0))
@@ -857,7 +785,7 @@ func importOrgData(tx *sql.Tx, clockfile string) {
 		//fmt.Printf("len=%d, headerStack=%+v", len(headerStack), headerStack)
 		switch entry.lType {
 		case header:
-			headerStack[len(headerStack)-1], err = AddHeader(tx, entry.header, "", headerStack[len(headerStack)-2], entry.deep)
+			headerStack[len(headerStack)-1], err = AddHeader(tx, entry.header, "")
 			if err != nil {
 				panic(err)
 			}
@@ -873,7 +801,7 @@ func loadTimeFile(clockfile string,
 	data := make([]orgEntry, 0, 100)
 
 	c := make(chan orgEntry)
-	go loadOrgFile(clockfile, c)
+	go LoadOrgFile(clockfile, c)
 	for entry := range c {
 		data = append(data, entry)
 	}
@@ -1382,7 +1310,7 @@ func ShowOrg(db *sql.DB, argv []string) error {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	hdrs := dbQ(db.Query, `select header_id, depth, header
+	hdrs := dbQ(db.Query, `select header_id, header
 	from headers
 	where active=1
 	and lower(header) like lower('%'||?||'%')
@@ -1393,12 +1321,11 @@ func ShowOrg(db *sql.DB, argv []string) error {
 	for hdrs.Next() {
 		var hid int
 		var headerTxt string
-		var depth int
-		hdrs.Scan(&hid, &depth, &headerTxt)
+		hdrs.Scan(&hid, &headerTxt)
 		headEntry := orgEntry{
 			lType:  header,
-			deep:   depth,
 			header: headerTxt,
+			deep:   1,
 		}
 		entr := dbQ(db.Query, `select start, end, strftime('%s',end)-strftime('%s',start) duration
 		from entries
@@ -1421,7 +1348,7 @@ func ShowOrg(db *sql.DB, argv []string) error {
 				start:    &start,
 				end:      &end,
 				duration: time.Duration(dur * 1000000000),
-				deep:     depth,
+				deep:     1,
 			}
 			fmt.Printf("%s\n", clockEntry)
 		}

@@ -58,8 +58,7 @@ var headAddCmd = &cobra.Command{
 				return fmt.Errorf("handler '%s' does already exist", handle)
 			}
 
-			var dummyRowID tools.RowId
-			_, err := tools.AddHeader(tx, strings.Join(args, " "), handle, dummyRowID, 0)
+			_, err := tools.AddHeader(tx, strings.Join(args, " "), handle)
 			return err
 		})
 	},
