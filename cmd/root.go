@@ -72,12 +72,22 @@ func init() {
 	RootCmd.PersistentFlags().StringVarP(&clockfile, "clockfile", "c", "", "Path to the clockfile = time entry database")
 	RootCmd.PersistentFlags().BoolVarP(&Debug, "debug", "D", false, "Enables debug output")
 	RootCmd.PersistentFlags().DurationVarP(&ModifyEffectiveTime, "mod", "m", time.Duration(0), "modify effective time (backwards), eg 7m subtracts 7 minutes")
+	RootCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
+	RootCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")
+	RootCmd.PersistentFlags().BoolVarP(&ShowRounding, "display-rounding", "r", false, "display rounding difference in output")
+	RootCmd.PersistentFlags().StringVarP(&DurationStyle, "style", "", "hour", "show duration style: time (2:30)/ hour (2.5 h) / short (2.5, default)")
+	RootCmd.PersistentFlags().BoolVarP(&SubHeaders, "subheaders", "s", false, "display subheaders")
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
 	//RootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	viper.BindPFlag("clockfile", RootCmd.PersistentFlags().Lookup("clockfile"))
 	viper.BindPFlag("debug", RootCmd.PersistentFlags().Lookup("debug"))
 	//fmt.Println("2clockfile=", viper.GetString("clockfile"))
+	viper.BindPFlag("show.rounding", RootCmd.PersistentFlags().Lookup("rounding"))
+	viper.BindPFlag("show.style", RootCmd.PersistentFlags().Lookup("style"))
+	viper.BindPFlag("show.bias", RootCmd.PersistentFlags().Lookup("bias"))
+	viper.BindPFlag("show.display-rounding", RootCmd.PersistentFlags().Lookup("display-rounding"))
+	viper.BindPFlag("show.subheaders", RootCmd.PersistentFlags().Lookup("subheaders"))
 }
 
 // initConfig reads in config file and ENV variables if set.

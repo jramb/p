@@ -25,7 +25,6 @@ import (
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"time"
 )
 
 var weekCmd = &cobra.Command{
@@ -43,16 +42,4 @@ var weekCmd = &cobra.Command{
 
 func init() {
 	RootCmd.AddCommand(weekCmd)
-
-	weekCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
-	weekCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")
-	weekCmd.PersistentFlags().BoolVarP(&ShowRounding, "display-rounding", "r", false, "display rounding difference in output")
-	weekCmd.PersistentFlags().BoolVarP(&SubHeaders, "subheaders", "s", false, "display subheaders")
-	weekCmd.PersistentFlags().StringVarP(&DurationStyle, "style", "", "hour", "show duration style: time / hour")
-
-	viper.BindPFlag("show.rounding", weekCmd.PersistentFlags().Lookup("rounding"))
-	viper.BindPFlag("show.style", weekCmd.PersistentFlags().Lookup("style"))
-	viper.BindPFlag("show.bias", weekCmd.PersistentFlags().Lookup("bias"))
-	viper.BindPFlag("show.subheaders", weekCmd.PersistentFlags().Lookup("subheaders"))
-	viper.BindPFlag("show.display-rounding", weekCmd.PersistentFlags().Lookup("display-rounding"))
 }

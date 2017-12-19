@@ -25,7 +25,6 @@ import (
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"time"
 )
 
 // printCmd represents the print command
@@ -43,14 +42,4 @@ one line per entry. The format is compatible with Ledger-cli.org `,
 
 func init() {
 	RootCmd.AddCommand(ledgerCmd)
-
-	ledgerCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
-	ledgerCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")
-	// ledgerCmd.PersistentFlags().BoolVarP(&ShowRounding, "display-rounding", "r", false, "display rounding difference in output")
-	// ledgerCmd.PersistentFlags().StringVarP(&DurationStyle, "style", "", "hour", "show duration style: time / hour")
-
-	viper.BindPFlag("show.rounding", ledgerCmd.PersistentFlags().Lookup("rounding"))
-	// viper.BindPFlag("show.style", ledgerCmd.PersistentFlags().Lookup("style"))
-	viper.BindPFlag("show.bias", ledgerCmd.PersistentFlags().Lookup("bias"))
-	viper.BindPFlag("show.display-rounding", ledgerCmd.PersistentFlags().Lookup("display-rounding"))
 }

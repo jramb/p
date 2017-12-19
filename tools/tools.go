@@ -84,27 +84,6 @@ func d(args ...interface{}) {
 These are only to be able to log what is being executed
 */
 
-/*
-func (d myDuration) String() string {
-	if viper.GetString("durationStyle") == "time" {
-		var sign string
-		if d < 0 {
-			sign = "-"
-			d = -d
-		}
-		td := time.Duration(d)
-		mins := (td / time.Minute) % 60
-		hours := (td - mins*time.Minute) / time.Hour
-		return fmt.Sprintf("%s%d:%02d", sign, hours, mins)
-	} else {
-		hours := time.Duration(d).Minutes() / 60.
-		return fmt.Sprintf("%3.1fh", hours)
-	}
-	//return fmt.Sprintf("%4d:%02d %s", hours, mins, ds)
-	//return strings.Replace(ds, "m0s", "m", 1)
-}
-*/
-
 func dbDebug(action string, elapsed time.Duration, query string, res *sql.Result, args ...interface{}) {
 	resStr := ""
 	if res != nil {
@@ -288,7 +267,7 @@ func newUUID() string {
 func AddHeader(tx *sql.Tx, header string, handle string) (RowId, error) {
 	headerUUUID := newUUID()
 	res := dbX(tx.Exec, `insert into headers (header_uuid, header, handle, creation_date, active)
-	values(?,?,?,?,?,?,1)`,
+	values(?,?,?,?,1)`,
 		headerUUUID, header, handle, time.Now())
 	rowid, err := res.LastInsertId()
 	if err != nil {
@@ -964,7 +943,8 @@ func DurationRound(unrounded time.Duration, rnd time.Duration, bias time.Duratio
 }
 
 func formatDuration(d time.Duration) string {
-	if viper.GetString("show.style") == "time" {
+	var style = viper.GetString("show.style")
+	if style == "time" {
 		var sign string
 		if d < 0 {
 			sign = "-"
@@ -973,9 +953,13 @@ func formatDuration(d time.Duration) string {
 		mins := (d / time.Minute) % 60
 		hours := (d - mins*time.Minute) / time.Hour
 		return fmt.Sprintf("%s%d:%02d", sign, hours, mins)
-	} else {
+	} else if style == "hour" {
 		hours := time.Duration(d).Minutes() / 60.
 		return fmt.Sprintf("%3.1f h", hours)
+
+	} else { //"short"
+		hours := time.Duration(d).Minutes() / 60.
+		return fmt.Sprintf("%3.1f", hours)
 	}
 }
 
