@@ -1036,15 +1036,15 @@ order by sum_duration desc
 
 func QueryDays(db *sql.DB, from, to time.Time, filter string, rounding time.Duration, bias time.Duration) ([]TimeDurationEntry, error) {
 	rows := dbQ(db.Query, `
-with b as (select h.header, h.handle, h.depth, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
+with b as (select h.header, h.handle, date(start) start_date, (strftime('%s',end)-strftime('%s',start)) duration
 from entries e
 join headers h on h.header_id = e.header_id and h.active=1
 where e.end is not null
 and e.start between ? and ?)
-select start_date, header, handle, depth, sum(duration)
+select start_date, header, handle, sum(duration)
 from b
 where lower(header) like lower('%'||?||'%')
-group by header, handle, depth, start_date
+group by header, handle, start_date
 order by start_date asc
 `, from, to, filter)
 	defer rows.Close()
@@ -1056,7 +1056,7 @@ order by start_date asc
 
 	for rows.Next() {
 		var e TimeDurationEntry
-		rows.Scan(&e.Start, &e.Head, &e.Handle, &e.Depth, &e.Duration)
+		rows.Scan(&e.Start, &e.Head, &e.Handle, &e.Duration)
 		dur := time.Duration(e.Duration * 1000000000)
 		rounded := DurationRound(dur, rounding, bias)
 		diff := dur - rounded
@@ -1350,7 +1350,7 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	entr := dbQ(db.Query, `select h.header_id, h.depth, h.header, h.handle, e.start, e.end
+	entr := dbQ(db.Query, `select h.header_id, h.header, h.handle, e.start, e.end
 		from entries e
                 join headers h on h.header_id = e.header_id
 		where lower(header) like lower('%'||?||'%')
@@ -1364,10 +1364,9 @@ func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Dur
 		var start *time.Time
 		var end *time.Time
 		var hid int
-		var depth int
 		var headerTxt string
 		var handle *string
-		entr.Scan(&hid, &depth, &headerTxt, &handle, &start, &end)
+		entr.Scan(&hid, &headerTxt, &handle, &start, &end)
 		var handleStr string
 		if handle != nil {
 			handleStr = "  " + *handle
