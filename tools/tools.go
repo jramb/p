@@ -260,7 +260,8 @@ func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText
 
 func newUUID() string {
 	//return uuid.NewV4(). String()
-	u := uuid.NewV4()
+	// u, err := uuid.NewV4()
+	u := uuid.Must(uuid.NewV4())
 	return strings.Trim(base64.URLEncoding.EncodeToString(u.Bytes()), "=")
 }
 
@@ -1073,7 +1074,7 @@ type listOfWeekDays [8]time.Duration
 
 type headerDays map[string]*listOfWeekDays
 
-func printWeek(week headerDays) {
+func printWeek(week headerDays, title string) {
 	maxLen := 0
 	withSub := viper.GetBool("show.subheaders")
 	// calculate sum of days
@@ -1124,7 +1125,7 @@ func printWeek(week headerDays) {
 	tab := table.NewTable()
 	row := table.NewRow()
 
-	row = row.Add(table.Cell{"", table.Left})
+	row = row.Add(table.Cell{title, table.Left})
 	row = row.Add(table.Cell{"Mon", table.Center})
 	row = row.Add(table.Cell{"Tis", table.Center})
 	row = row.Add(table.Cell{"Ons", table.Center})
@@ -1164,7 +1165,7 @@ func printWeek(week headerDays) {
 		}
 	}
 	tab = tab.Add(row)
-	tab.Print()
+	tab.Print(viper.GetBool("show.orgmode"))
 }
 
 func ShowWeek(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
@@ -1203,7 +1204,7 @@ order by header, start_date asc
 
 	week := make(headerDays)
 
-	fmt.Println("Week:", printTimeFrame(&from, &to))
+	// fmt.Println("Week:", printTimeFrame(&from, &to))
 	for rows.Next() {
 		var start string //time.Time //string
 		var offset int   //time.Time //string
@@ -1226,7 +1227,7 @@ order by header, start_date asc
 
 		total += dur
 	}
-	printWeek(week)
+	printWeek(week, printTimeFrame(&from, &to))
 	fmt.Printf("     Total: %9s%s\n", formatDuration(total), formatRoundErr(rounderr))
 
 	return nil

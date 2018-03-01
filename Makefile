@@ -1,7 +1,10 @@
-default: show
+default: week
 
 show:
 	go run main.go show week
+
+week:
+	go run main.go week
 
 run:
 	go run main.go
@@ -12,8 +15,17 @@ install:
 import:
 	go run p.go import "$(CLOCKFILE)"
 
+win32:
+	env CGO_ENABLED=1 GOOS=windows GOARCH=386 CC="i686-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp" go build -o p32.exe
+
 win:
-	env CGO_ENABLED=1 GOOS=windows GOARCH=386 CC="i686-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp" go build -o p.exe
+	env CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC="x86_64-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp" go build -o p.exe
+
+prep-sqlite3-32: # as su?
+	env CGO_ENABLED=1 GOOS=windows GOARCH=386 CC="i686-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp" go install github.com/mattn/go-sqlite3
+
+prep-sqlite3: # as su?
+	env CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC="x86_64-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp" go install github.com/mattn/go-sqlite3
 
 test:
 	(cd tools ; go test)
@@ -52,7 +64,7 @@ jsonx:
 		-d @-
 
 #
-#env CGO_ENABLED=1 GOOS=windows GOARCH=386 CC=i686-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp go install github.com/mattn/go-sqlite3
+#env CGO_ENABLED=1 GOOS=windows GOARCH=386 CC="i686-w64-mingw32-gcc -fno-stack-protector -D_FORTIFY_SOURCE=0 -lssp" go install github.com/mattn/go-sqlite3
 #
 
 .PHONY: server

@@ -98,9 +98,12 @@ func printDivider(sizes []int) {
 	}
 }
 
-func (tab Table) Print() {
+func (tab Table) Print(orgmode bool) {
 	sizes := tab.colSizes()
 	for _, r := range tab {
+		if orgmode {
+			fmt.Print("|")
+		}
 		if len(r) == 0 {
 			printDivider(sizes)
 		} else {
@@ -113,6 +116,9 @@ func (tab Table) Print() {
 				}
 				// fmt.Printf(formats[x], c.Value)
 			}
+		}
+		if orgmode {
+			fmt.Print("|")
 		}
 		fmt.Println()
 	}

@@ -15,6 +15,7 @@ var EffectiveTimeNow = time.Now() //.round(time.Minute)
 var cfgFile string
 var clockfile string
 var ModifyEffectiveTime time.Duration
+var OrgMode bool
 
 var Debug bool
 
@@ -74,6 +75,7 @@ func init() {
 	RootCmd.PersistentFlags().DurationVarP(&ModifyEffectiveTime, "mod", "m", time.Duration(0), "modify effective time (backwards), eg 7m subtracts 7 minutes")
 	RootCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
 	RootCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")
+	RootCmd.PersistentFlags().BoolVarP(&OrgMode, "orgmode", "o", false, "use OrgMode format where applicable")
 	RootCmd.PersistentFlags().BoolVarP(&ShowRounding, "display-rounding", "r", false, "display rounding difference in output")
 	RootCmd.PersistentFlags().StringVarP(&DurationStyle, "style", "", "hour", "show duration style: time (2:30)/ hour (2.5 h) / short (2.5, default)")
 	RootCmd.PersistentFlags().BoolVarP(&SubHeaders, "subheaders", "s", false, "display subheaders")
@@ -86,6 +88,7 @@ func init() {
 	viper.BindPFlag("show.rounding", RootCmd.PersistentFlags().Lookup("rounding"))
 	viper.BindPFlag("show.style", RootCmd.PersistentFlags().Lookup("style"))
 	viper.BindPFlag("show.bias", RootCmd.PersistentFlags().Lookup("bias"))
+	viper.BindPFlag("show.orgmode", RootCmd.PersistentFlags().Lookup("orgmode"))
 	viper.BindPFlag("show.display-rounding", RootCmd.PersistentFlags().Lookup("display-rounding"))
 	viper.BindPFlag("show.subheaders", RootCmd.PersistentFlags().Lookup("subheaders"))
 }
