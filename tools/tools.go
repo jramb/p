@@ -1074,6 +1074,20 @@ type listOfWeekDays [8]time.Duration
 
 type headerDays map[string]*listOfWeekDays
 
+func getKeys(week headerDays) []string {
+	keys := make([]string, len(week))
+	// var keys []string
+	// for k := range week {
+	// 	keys = append(keys, k)
+	// }
+	i := 0
+	for idx := range week {
+		keys[i] = idx
+		i++
+	}
+	return keys
+}
+
 func printWeek(week headerDays, title string) {
 	maxLen := 0
 	withSub := viper.GetBool("show.subheaders")
@@ -1085,7 +1099,7 @@ func printWeek(week headerDays, title string) {
 		}
 	}
 	// find max length of header
-	for header, _ := range week {
+	for header := range week {
 		currLen := 0
 		if withSub {
 			headerParts := strings.Split(header, ":")
@@ -1102,24 +1116,23 @@ func printWeek(week headerDays, title string) {
 	}
 	if withSub {
 		// add subtotals  A:B:C -> A:B and A
-		for header, days := range week {
+		// need to make a copy of the original keys first
+		// for header, days := range week {
+		for _, header := range getKeys(week) {
 			headerParts := strings.Split(header, ":")
-			_ = days
+			// for i := len(headerParts) - 1; i > 0; i-- {
 			for i := 1; i < len(headerParts); i++ {
 				subHdr := strings.Join(headerParts[:i], ":")
 				if _, ok := week[subHdr]; !ok {
 					week[subHdr] = new(listOfWeekDays)
 				}
-				for n, v := range days {
-					week[subHdr][n] = week[subHdr][n] + v
+				for n, v := range week[header] {
+					week[subHdr][n] += v
 				}
 			}
 		}
 	}
-	var keys []string
-	for k := range week {
-		keys = append(keys, k)
-	}
+	keys := getKeys(week)
 	sort.Strings(keys)
 
 	tab := table.NewTable()

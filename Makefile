@@ -4,7 +4,7 @@ show:
 	go run main.go show week
 
 week:
-	go run main.go week
+	go run main.go week -s -o
 
 run:
 	go run main.go
