@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jramb/p/tools"
-	"github.com/spf13/viper"
 )
 
 type ShowArgs struct {
@@ -22,8 +21,7 @@ type ShowReply struct {
 
 func (h *PunchService) Show(r *http.Request, args *ShowArgs, reply *ShowReply) error {
 	error := tools.WithOpenDB(true, func(db *sql.DB) error {
-		bias := viper.GetDuration("show.bias")
-		rounding := viper.GetDuration("show.rounding")
+		rounding, bias := tools.GetRoundingAndBias()
 		timeFrame := args.TimeFrame
 		filter := args.Filter
 		var err error

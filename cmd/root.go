@@ -74,7 +74,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolVarP(&Debug, "debug", "D", false, "Enables debug output")
 	RootCmd.PersistentFlags().DurationVarP(&ModifyEffectiveTime, "mod", "m", time.Duration(0), "modify effective time (backwards), eg 7m subtracts 7 minutes")
 	RootCmd.PersistentFlags().DurationVarP(&RoundTime, "rounding", "", time.Minute, "round times according to this duration, e.g. 1m, 15m, 1h")
-	RootCmd.PersistentFlags().DurationVarP(&RoundingBias, "bias", "", time.Duration(0), "rounding bias (duration, default 0, max 1/2 rounding.)")
+	RootCmd.PersistentFlags().IntVarP(&RoundingBias, "bias", "", 0, "rounding bias (default 0=absolute fair,1,2, max 3=alwas round up")
 	RootCmd.PersistentFlags().BoolVarP(&OrgMode, "orgmode", "o", false, "use OrgMode format where applicable")
 	RootCmd.PersistentFlags().BoolVarP(&ShowRounding, "display-rounding", "r", false, "display rounding difference in output")
 	RootCmd.PersistentFlags().StringVarP(&DurationStyle, "style", "", "hour", "show duration style: time (2:30)/ hour (2.5 h) / short (2.5, default)")

@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // showCmd represents the show command
@@ -55,7 +54,7 @@ var showSumCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
 			timeFrame := tools.FirstOrEmpty(args)
-			return tools.ShowTimes(db, timeFrame, args, viper.GetDuration("show.rounding"), viper.GetDuration("show.bias"))
+			return tools.ShowTimes(db, timeFrame, args)
 		})
 	},
 }
@@ -66,14 +65,13 @@ var showDaysCmd = &cobra.Command{
 	Long:  `Shows the time entries, summarized on day basis.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
-			bias := viper.GetDuration("show.bias")
 			timeFrame := tools.FirstOrEmpty(args)
-			if err := tools.ShowDays(db, timeFrame, args, viper.GetDuration("show.rounding"), bias); err != nil {
+			if err := tools.ShowDays(db, timeFrame, args); err != nil {
 				return err
 			}
 			//tools.Running(db, args, "", GetEffectiveTime())
 			fmt.Println("=================================")
-			return tools.ShowTimes(db, timeFrame, args, viper.GetDuration("show.rounding"), bias)
+			return tools.ShowTimes(db, timeFrame, args)
 		})
 	},
 }
@@ -84,9 +82,8 @@ var showWeekCmd = &cobra.Command{
 	Long:  `Shows the time entries, in a table for a week.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
-			bias := viper.GetDuration("show.bias")
 			timeFrame := tools.FirstOrEmpty(args)
-			return tools.ShowWeek(db, timeFrame, args, viper.GetDuration("show.rounding"), bias)
+			return tools.ShowWeek(db, timeFrame, args)
 		})
 	},
 }
@@ -98,9 +95,7 @@ var todayCmd = &cobra.Command{
 This is the same as "show sum today.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
-			bias := viper.GetDuration("show.bias")
-			return tools.ShowTimes(db, "today", args, viper.GetDuration("show.rounding"), bias)
-			// return tools.ShowDays(db, "today", args, viper.GetDuration("show.rounding"), bias)
+			return tools.ShowTimes(db, "today", args)
 		})
 	},
 }

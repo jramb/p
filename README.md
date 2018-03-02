@@ -66,7 +66,7 @@ The config file is named `punch.toml`. You can start with this contents (customi
 
     [show]
     rounding = "30m"        # default is "1m"
-    bias = "5m"             # default is "0m"
+    bias = 1                # default is 0, can be up to 3=max
     display-rounding = true # default is false
 
 Alternatively use the YAML format: `.config/punch.yaml`:
@@ -75,7 +75,7 @@ Alternatively use the YAML format: `.config/punch.yaml`:
     debug: false
     show:
       rounding: 30m
-      bias: 5m
+      bias: 1
       display-rounding: true
 
 
@@ -206,13 +206,13 @@ that is rounded up to 0:30 and I do not complain!
 If you want to achieve that, use the `bias` setup (either in your `.punch.yaml` or in the command line).
 For example, the plummer will use this command:
 
-    p show days --rounding 30m --bias 15m -r
+    p show days --rounding 30m --bias 3 -r
 
 (The `-r` flag also displays the rounded value). Technically, the bias is
-simply added to the duration before rounding, which in above case results in
+some extra duration added to the duration before rounding, which in above case results in
 that durations are always rounded up to the nearest rounding factor.  A bias of
-`0m` is fair in the long run, everything in between is a negotiation. Punch will not
-use a bias larger than half the rounding.
+`0` is absolute fair in the long run, `3` always rounds up to (my plummer).
+You must not use a bias other than `0` ... `3`.
 
 ### Ledger
 

@@ -32,7 +32,7 @@ import (
 )
 
 var RoundTime time.Duration
-var RoundingBias time.Duration // rounding modifier should not be more then half the RoundTime
+var RoundingBias int // was: time.Duration // rounding modifier should not be more then half the RoundTime
 var ShowRounding bool
 var SubHeaders bool
 var DurationStyle string

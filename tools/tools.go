@@ -990,7 +990,8 @@ func formatHeader(head, handle string) string {
 	}
 }
 
-func ShowTimes(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) (err error) {
+func ShowTimes(db *sql.DB, timeFrame string, argv []string) (err error) {
+	rounding, bias := GetRoundingAndBias()
 	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
 	if err != nil {
 		return err
@@ -1181,7 +1182,8 @@ func printWeek(week headerDays, title string) {
 	tab.Print(viper.GetBool("show.orgmode"))
 }
 
-func ShowWeek(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
+func ShowWeek(db *sql.DB, timeFrame string, argv []string) error {
+	rounding, bias := GetRoundingAndBias()
 	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
 	days := to.Sub(from) / time.Hour / 24
 	if days != 7 {
@@ -1246,7 +1248,8 @@ order by header, start_date asc
 	return nil
 }
 
-func ShowDays(db *sql.DB, timeFrame string, argv []string, rounding time.Duration, bias time.Duration) error {
+func ShowDays(db *sql.DB, timeFrame string, argv []string) error {
+	rounding, bias := GetRoundingAndBias()
 	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
 	days := to.Sub(from) / time.Hour / 24
 	fmt.Printf("Number days = %d\n", int64(days))
@@ -1355,7 +1358,8 @@ func ShowOrg(db *sql.DB, argv []string) error {
 	return nil
 }
 
-func ShowLedger(db *sql.DB, argv []string, rounding time.Duration, bias time.Duration) (err error) {
+func ShowLedger(db *sql.DB, argv []string) (err error) {
+	rounding, bias := GetRoundingAndBias()
 	from, to, err := DecodeTimeFrame(FirstOrEmpty(argv))
 	if err != nil {
 		return err
@@ -1469,4 +1473,12 @@ func ParseHandle(args []string) (string, []string) {
 		}
 	}
 	return "", args
+}
+
+func GetRoundingAndBias() (time.Duration, time.Duration) {
+	rounding := viper.GetDuration("show.rounding")
+	biasMul := int64(viper.GetInt("show.bias"))
+	bias := time.Duration(int64(rounding) * biasMul / 6)
+	d("rounding=", rounding, ", bias=", bias)
+	return rounding, bias
 }

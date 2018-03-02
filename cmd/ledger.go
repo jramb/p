@@ -24,7 +24,6 @@ import (
 	"database/sql"
 	"github.com/jramb/p/tools"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // printCmd represents the print command
@@ -35,7 +34,7 @@ var ledgerCmd = &cobra.Command{
 one line per entry. The format is compatible with Ledger-cli.org `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tools.WithOpenDB(true, func(db *sql.DB) error {
-			return tools.ShowLedger(db, args, viper.GetDuration("show.rounding"), viper.GetDuration("show.bias"))
+			return tools.ShowLedger(db, args)
 		})
 	},
 }
