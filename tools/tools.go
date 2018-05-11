@@ -1185,8 +1185,9 @@ func printWeek(week headerDays, title string) {
 func ShowWeek(db *sql.DB, timeFrame string, argv []string) error {
 	rounding, bias := GetRoundingAndBias()
 	from, to, err := DecodeTimeFrame(timeFrame) //FirstOrEmpty(argv))
-	days := to.Sub(from) / time.Hour / 24
+	days := (to.Sub(from)/time.Hour + 12) / 24
 	if days != 7 {
+		// fmt.Printf("%s -> %s = %s or %s\n", from, to, to.Sub(from), days)
 		fmt.Printf("Number days = %d, currently only single weeks are supported\n", int64(days))
 		return nil
 	}
