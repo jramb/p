@@ -920,16 +920,33 @@ func ListLogEntries(db *sql.DB, argv []string) error {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
-	rows := dbQ(db.Query, `select log_text, creation_date from log
-where creation_date between ? and ?
-and lower(log_text) like lower('%'||?||'%')
+	rows := dbQ(db.Query, `
+with p as (select ? pfrom, ? pto, ? filter)
+select log_text, creation_date
+, (select group_concat(distinct h.handle)
+   from entries e join headers h on e.header_id = h.header_id
+   where l.creation_date>=e.start and (e.end is null or l.creation_date<=e.end)
+   ) handles
+from log l, p
+where l.creation_date between p.pfrom and p.pto
+and (p.filter is null
+     or lower(l.log_text) like lower('%'||p.filter||'%')
+     or exists (select 1 from entries e
+            where e.header_id = (select h.header_id from headers h where h.handle=p.filter)
+	    and l.creation_date>=e.start and (e.end is null or l.creation_date<=e.end)
+           ))
 `, from, to, filter)
 	defer rows.Close()
 	for rows.Next() {
 		var txt string
+		var handles string
 		var logTime time.Time
-		rows.Scan(&txt, &logTime)
-		fmt.Printf("%s: %s\n", logTime.Format(isoDateTime), txt)
+		rows.Scan(&txt, &logTime, &handles)
+		if filter == handles {
+			fmt.Printf("%s: %s\n", logTime.Format(isoDateTime), txt)
+		} else {
+			fmt.Printf("%s: [%s] %s\n", logTime.Format(isoDateTime), handles, txt)
+		}
 	}
 	return nil
 }
