@@ -335,8 +335,13 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	_ = dbX(tx.Exec, `create table if not exists params
 	(param text,value text, primary key (param))`)
 
-	oldVersion := GetParamInt(tx, "version", 0)
-	currentVersion := 8
+	dbVersion := GetParamInt(tx, "version", 0)
+	currentVersion := 9
+
+	if dbVersion > currentVersion {
+		fmt.Printf("This code is for an older version than your database: code %d, db %d\n", currentVersion, dbVersion)
+		return nil
+	}
 
 	//fmt.Printf("database type: %T\n", tx)
 	_ = dbX(tx.Exec, `create table if not exists headers
@@ -355,21 +360,26 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	, header_id integer
 	, start datetime not null
 	, end datetime)`)
-	_ = dbX(tx.Exec, `create table if not exists log ( creation_date datetime, log_text text)`)
+	_ = dbX(tx.Exec, `create table if not exists log
+	( log_uuid text
+	, revision int
+	, creation_date datetime
+	, log_text text
+	, header_uuid text )`)
 	_ = dbX(tx.Exec, `create table if not exists todo
 	( todo_id integer primary key autoincrement
+        , todo_uuid text
+	, revision int
 	, title text not null
 	, handle text
 	, creation_date datetime not null
   , done_date datetime)`)
 	_ = dbX(tx.Exec, `create unique index if not exists headers_u1 on headers (header_uuid)`)
 	_ = dbX(tx.Exec, `create unique index if not exists entries_u1 on entries (entry_uuid)`)
+	_ = dbX(tx.Exec, `create unique index if not exists log_u1 on log (log_uuid)`)
+	_ = dbX(tx.Exec, `create unique index if not exists todo_u1 on todo (todo_uuid)`)
 
-	if oldVersion == currentVersion {
-		return nil
-	}
-
-	//if oldVersion < 6 && currentVersion >= 6 {
+	//if dbVersion < 6 && currentVersion >= 6 {
 	//_ = dbX(tx.Exec, `alter table headers add revision int`)
 	//_ = dbX(tx.Exec, `alter table entries add revision int`)
 	//}
@@ -393,6 +403,33 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 		_ = dbX(tx.Exec, `update entries set entry_uuid=?, revision=null where rowid = ? and entry_uuid is null`,
 			newUUID(), rowid)
 	}
+	rowsL := dbQ(tx.Query, `select rowid from log where log_uuid is null`)
+	defer rowsL.Close()
+	for rowsL.Next() {
+		var rowid int
+		rowsL.Scan(&rowid)
+		_ = dbX(tx.Exec, `update log set log_uuid=?, revision=null where rowid = ? and log_uuid is null`,
+			newUUID(), rowid)
+	}
+	rowsT := dbQ(tx.Query, `select rowid from todo where todo_uuid is null`)
+	defer rowsT.Close()
+	for rowsT.Next() {
+		var rowid int
+		rowsT.Scan(&rowid)
+		_ = dbX(tx.Exec, `update todo set todo_uuid=?, revision=null where rowid = ? and todo_uuid is null`,
+			newUUID(), rowid)
+	}
+
+	_ = dbX(tx.Exec, `update log
+  set header_uuid = (select h.header_uuid
+   from entries e
+   join headers h on e.header_id = h.header_id
+   where log.creation_date>=e.start and (e.end is null or log.creation_date<=e.end))
+where header_uuid is null
+and 1=(select count(*)
+   from entries e
+   join headers h on e.header_id = h.header_id
+   where log.creation_date>=e.start and (e.end is null or log.creation_date<=e.end))`)
 
 	return nil
 }
@@ -436,9 +473,15 @@ func modifyOpen(tx *sql.Tx, argv []string, modifyEffectiveTime *time.Duration) {
 
 func LogEntry(tx *sql.Tx, argv []string, effectiveTimeNow time.Time) error {
 	logString := strings.Join(argv, " ")
+	currentHdr := currentHeader(tx, effectiveTimeNow)
 	if logString != "" {
-		_ = dbX(tx.Exec, `insert into log (creation_date, log_text) values (?,?)`,
-			effectiveTimeNow, strings.Join(argv, " "))
+		_ = dbX(tx.Exec, `insert into log
+(log_uuid, creation_date, log_text, header_uuid)
+values (?,?,?,?)`,
+			newUUID(),
+			effectiveTimeNow,
+			strings.Join(argv, " "),
+			currentHdr)
 	}
 	return nil
 }
@@ -884,6 +927,21 @@ func printTimeFrame(from, to *time.Time) string {
 	}
 }
 
+func currentHeader(tx *sql.Tx, effectiveTimeNow time.Time) *string {
+	rows := dbQ(tx.Query, `with p as (select ? efftime)
+select h.header_uuid
+from entries e, p
+join headers h on e.header_id = h.header_id
+where p.efftime>=e.start and (e.end is null or p.efftime<=e.end)`, effectiveTimeNow)
+	defer rows.Close()
+	for rows.Next() {
+		var huuid string
+		rows.Scan(&huuid)
+		return &huuid
+	}
+	return nil
+}
+
 func Running(db *sql.DB, argv []string, extra string, effectiveTimeNow time.Time) {
 	rows := dbQ(db.Query, `select e.start, h.header, h.handle
 	from entries e
@@ -920,29 +978,29 @@ func ListLogEntries(db *sql.DB, argv []string) error {
 	if len(argv) > 1 {
 		filter = argv[1]
 	}
+	/* , (select group_concat(distinct h.handle)
+	   from entries e join headers h on e.header_id = h.header_id
+	   where l.creation_date>=e.start and (e.end is null or l.creation_date<=e.end)
+	   ) handles */
 	rows := dbQ(db.Query, `
 with p as (select ? pfrom, ? pto, ? filter)
 select log_text, creation_date
-, (select group_concat(distinct h.handle)
-   from entries e join headers h on e.header_id = h.header_id
-   where l.creation_date>=e.start and (e.end is null or l.creation_date<=e.end)
-   ) handles
+, (select h.handle
+   from headers h where l.header_uuid = h.header_uuid) handles
 from log l, p
 where l.creation_date between p.pfrom and p.pto
-and (p.filter is null
-     or lower(l.log_text) like lower('%'||p.filter||'%')
-     or exists (select 1 from entries e
-            where e.header_id = (select h.header_id from headers h where h.handle=p.filter)
-	    and l.creation_date>=e.start and (e.end is null or l.creation_date<=e.end)
-           ))
-`, from, to, filter)
+and ((p.filter is null or lower(l.log_text) like lower('%'||p.filter||'%'))
+     or (l.header_uuid in (select header_uuid from headers h where h.handle = p.filter))
+)
+order by creation_date asc
+`, from, to, filter /*handle*/)
 	defer rows.Close()
 	for rows.Next() {
 		var txt string
 		var handles string
 		var logTime time.Time
 		rows.Scan(&txt, &logTime, &handles)
-		if filter == handles {
+		if filter == handles || handles == "" {
 			fmt.Printf("%s: %s\n", logTime.Format(isoDateTime), txt)
 		} else {
 			fmt.Printf("%s: [%s] %s\n", logTime.Format(isoDateTime), handles, txt)
