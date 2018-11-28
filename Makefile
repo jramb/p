@@ -1,4 +1,7 @@
-default: week
+default: check-in
+
+check-in:
+	go run main.go in @test
 
 show:
 	go run main.go show week

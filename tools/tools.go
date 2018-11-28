@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"github.com/jramb/p/table"
 	"io"
-	//"log"
 	"os"
 	"regexp"
 	"sort"
@@ -28,6 +27,7 @@ import (
 	// go get github.com/mattn/go-sqlite3
 	_ "github.com/mattn/go-sqlite3"
 	//"github.com/ttacon/chalk"
+	MQTT "github.com/eclipse/paho.mqtt.golang"
 	"github.com/jramb/chalk"
 )
 
@@ -82,38 +82,6 @@ func d(args ...interface{}) {
 }
 
 /*
-These are only to be able to log what is being executed
-*/
-
-func dbDebug(action string, elapsed time.Duration, query string, res *sql.Result, args ...interface{}) {
-	resStr := ""
-	if res != nil {
-		ra, _ := (*res).RowsAffected()
-		resStr = chalk.Magenta.Color(fmt.Sprintf("\n==>%d", ra))
-	}
-	d(chalk.Green.Color(action)+": ["+chalk.Blue.Color(elapsed.String())+"]\n",
-		chalk.Blue.Color(query), " ", chalk.Red, args, chalk.Reset, resStr)
-}
-
-func dbQ(dbF func(string, ...interface{}) (*sql.Rows, error), query string, args ...interface{}) *sql.Rows {
-	start := time.Now()
-	res, err := dbF(query, args...)
-	errCheck(err, query)
-	elapsed := time.Since(start)
-	dbDebug("db", elapsed, query, nil, args)
-	return res
-}
-
-func dbX(dbF func(string, ...interface{}) (sql.Result, error), query string, args ...interface{}) sql.Result {
-	start := time.Now()
-	res, err := dbF(query, args...)
-	errCheck(err, query)
-	elapsed := time.Since(start)
-	dbDebug("db", elapsed, query, &res, args)
-	return res
-}
-
-/*
 copyFileContents copies the contents of the file named src to the file named
 by dst. The file will be created if it does not already exist. If the
 destination file exists, all it's contents will be replaced by the contents
@@ -142,92 +110,6 @@ func copyFileContents(src, dst string) (err error) {
 	return
 }
 
-func GetParam(tx *sql.Tx, param string, whenNew string) string {
-	rows := dbQ(tx.Query, `select value from params where param=?`, param)
-	defer rows.Close()
-	for rows.Next() {
-		var val string
-		rows.Scan(&val)
-		return val
-	}
-	return whenNew
-}
-
-func SetParam(tx *sql.Tx, param string, value string) {
-	//log.Print(`in setParam`)
-	res := dbX(tx.Exec, `update params set value = ? where param= ?`, value, param)
-	updatedCnt, _ := res.RowsAffected()
-	if updatedCnt == 0 {
-		_ = dbX(tx.Exec, `insert into params (param, value) values(?,?)`, param, value)
-	}
-}
-
-func SetParamInt(tx *sql.Tx, param string, value int) {
-	SetParam(tx, param, strconv.Itoa(value))
-}
-
-func GetParamInt(tx *sql.Tx, param string, whenNew int) int {
-	p := GetParam(tx, param, strconv.Itoa(whenNew))
-	v, _ := strconv.Atoi(p)
-	return v
-}
-
-func GetUncommitted(tx *sql.Tx) (*[]JSONHeader, *[]JSONEntry) {
-	hdrs := make([]JSONHeader, 0, 5)
-	entr := make([]JSONEntry, 0, 10)
-	rh := dbQ(tx.Query, `select header_uuid, header, handle, active, creation_date from headers where coalesce(revision,'')=''`)
-	defer rh.Close()
-	for rh.Next() {
-		h := JSONHeader{}
-		//var active bool // column created as "boolean" -> this works
-		rh.Scan(&h.UUID, &h.Header, &h.Handle, &h.Active, &h.CreationDate)
-		//panic("exit")
-		hdrs = append(hdrs, h)
-	}
-	re := dbQ(tx.Query, `select e.entry_uuid, h.header_uuid, e.start, e.end from entries e
-	join headers h on h.header_id = e.header_id
-	where coalesce(e.revision,'')=''`)
-	defer re.Close()
-	for re.Next() {
-		e := JSONEntry{}
-		re.Scan(&e.UUID, &e.HeaderUUID, &e.Start, &e.End)
-		entr = append(entr, e)
-	}
-
-	return &hdrs, &entr
-}
-
-func CommitRevision(tx *sql.Tx, revision int) error {
-	_ = dbX(tx.Exec, `update headers set revision=? where revision is null`, revision)
-	_ = dbX(tx.Exec, `update entries set revision=? where revision is null`, revision)
-	return nil
-}
-
-func ApplyUpdates(tx *sql.Tx, hdr []JSONHeader, entr []JSONEntry, revision int) error {
-	if len(hdr) == 0 && len(entr) == 0 {
-		return nil
-	}
-	for _, h := range hdr {
-		active := 1
-		if h.Active {
-			active = 0
-		}
-		_ = dbX(tx.Exec, `insert or replace into headers 
-					(header_uuid, header, handle, active, creation_date, revision)
-					values (?, ?, ?, ?, ?, ?)`,
-			h.UUID, h.Header, h.Handle, active, h.CreationDate, revision)
-		//log.Println("UpH:", res)
-	}
-	for _, e := range entr {
-		_ = dbX(tx.Exec, `insert or replace into entries
-					(entry_uuid, header_id, start, end, revision)
-					values (?,(select header_id from headers where header_uuid=?),?,?,?)`,
-			e.UUID, e.HeaderUUID, e.Start, e.End, revision)
-		//log.Println("UpE:", res)
-	}
-	return nil
-}
-
 func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText string, err error) {
 	var rows *sql.Rows
 	if handle != "" {
@@ -242,19 +124,20 @@ func findHeader(tx *sql.Tx, header string, handle string) (hdr RowId, headerText
 	defer d(`done find header`)
 	errCheck(err, `findHeader`)
 	defer rows.Close()
-	var hdrId int
+	defer checkDBErr(rows)
+	var hdrID int
 	if rows.Next() {
-		rows.Scan(&hdrId, &headerText)
-		hdr = RowId(hdrId)
+		rows.Scan(&hdrID, &headerText)
+		hdr = RowId(hdrID)
 	} else {
 		err = errors.New("Header '" + header + "' not found!")
 		hdr = RowId(0)
 	}
 	if rows.Next() {
 		var anotherHeader string
-		rows.Scan(&hdrId, &anotherHeader)
+		rows.Scan(&hdrID, &anotherHeader)
 		err = errors.New("Too many matching headers: " + headerText + ", " + anotherHeader)
-		hdr = RowId(hdrId)
+		hdr = RowId(hdrID)
 	}
 	return
 }
@@ -390,6 +273,7 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 
 	rows := dbQ(tx.Query, `select rowid from headers where header_uuid is null`)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	for rows.Next() {
 		var rowid int
 		rows.Scan(&rowid)
@@ -406,6 +290,7 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	}
 	rowsL := dbQ(tx.Query, `select rowid from log where log_uuid is null`)
 	defer rowsL.Close()
+	defer checkDBErr(rowsL)
 	for rowsL.Next() {
 		var rowid int
 		rowsL.Scan(&rowid)
@@ -414,6 +299,7 @@ func PrepareDB(db *sql.DB, tx *sql.Tx) error {
 	}
 	rowsT := dbQ(tx.Query, `select rowid from todo where todo_uuid is null`)
 	defer rowsT.Close()
+	defer checkDBErr(rowsT)
 	for rowsT.Next() {
 		var rowid int
 		rowsT.Scan(&rowid)
@@ -442,6 +328,7 @@ func CloseAll(tx *sql.Tx, effectiveTimeNow time.Time) error {
 	if updatedCnt > 0 {
 		d("Closed entries: ", updatedCnt)
 	}
+	SendMQTT("off")
 	return nil
 }
 
@@ -457,6 +344,7 @@ func modifyOpen(tx *sql.Tx, argv []string, modifyEffectiveTime *time.Duration) {
 
 	rows := dbQ(tx.Query, `select start, rowid from entries where end is null`)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	var cnt int = 0
 	for rows.Next() {
 		cnt++
@@ -495,6 +383,7 @@ func VerifyHandle(db *sql.DB, handle string, fixit bool) (string, error) {
 			join headers h on e.header_id = h.header_id
 			where e.end is null`)
 			defer rows.Close()
+			defer checkDBErr(rows)
 			if rows.Next() {
 				var h string
 				rows.Scan(&h)
@@ -510,6 +399,7 @@ func VerifyHandle(db *sql.DB, handle string, fixit bool) (string, error) {
 	}
 	rows := dbQ(db.Query, `select handle from headers where handle = ?`, handle)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	if !rows.Next() {
 		return "", errors.New("handle not found: " + handle)
 		//errCheck(errors.New("handle not found"), `handle check`)
@@ -550,6 +440,7 @@ func TodoDone(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Ti
 		 and todo_id = ?
 		 `, todoId)
 			defer rows.Close()
+			defer checkDBErr(rows)
 
 			if rows.Next() {
 				var todoId int
@@ -582,6 +473,7 @@ func TodoUndo(tx *sql.Tx, argv []string, handle string) error {
 		 and todo_id = ?
 		 `, todoId)
 			defer rows.Close()
+			defer checkDBErr(rows)
 
 			if rows.Next() {
 				var todoId int
@@ -623,6 +515,7 @@ func ShowTodo(db *sql.DB, argv []string, handle string, limit int) error {
 		limit ?`, orderBy), handle, limit)
 	}
 	defer rows.Close()
+	defer checkDBErr(rows)
 	//var cnt int = 0
 	for rows.Next() {
 		var todoId int
@@ -633,6 +526,63 @@ func ShowTodo(db *sql.DB, argv []string, handle string, limit int) error {
 		fmt.Printf(chalk.Cyan.Color("#%d %s (@%s)\n"), todoId, title, handle)
 	}
 	return nil
+}
+
+func SendMQTT(text string) {
+	//define a function for the default message handler
+	var f MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
+		fmt.Printf("TOPIC: %s\n", msg.Topic())
+		fmt.Printf("MSG: %s\n", msg.Payload())
+	}
+	//create a ClientOptions struct setting the broker address, clientid, turn
+	//off trace output and set the default message handler
+	// opts := MQTT.NewClientOptions().AddBroker("tcp://iot.eclipse.org:1883")
+	broker := viper.GetString("mqtt.broker")
+	if broker == "" {
+		return
+	}
+
+	username := viper.GetString("mqtt.username")
+	topicprefix := viper.GetString("mqtt.topic-prefix") + "/" + username
+	opts := MQTT.NewClientOptions().
+		AddBroker(broker).
+		SetClientID(viper.GetString("mqtt.client-id")).
+		SetUsername(username).
+		SetPassword(viper.GetString("mqtt.password"))
+	opts.SetDefaultPublishHandler(f)
+
+	//create and start a client using the above ClientOptions
+	c := MQTT.NewClient(opts)
+	if token := c.Connect(); token.Wait() && token.Error() != nil {
+		panic(token.Error())
+	}
+
+	//subscribe to the topic /go-mqtt/sample and request messages to be delivered
+	//at a maximum qos of zero, wait for the receipt to confirm the subscription
+	// if token := c.Subscribe(topicprefix+"/sample", 0, nil); token.Wait() && token.Error() != nil {
+	// 	fmt.Println(token.Error())
+	// 	os.Exit(1)
+	// }
+
+	//Publish 5 messages to /go-mqtt/sample at qos 1 and wait for the receipt
+	//from the server after sending each message
+	// for i := 0; i < 3; i++ {
+	// text := fmt.Sprintf("this is msg #%d!", i)
+	topic := topicprefix + "/state"
+	token := c.Publish(topic, 0, false, text)
+	d(fmt.Sprintf("Send '%s' to %s at %s\n", text, topic, broker))
+	token.Wait()
+	// }
+
+	// time.Sleep(3 * time.Second)
+
+	//unsubscribe from /go-mqtt/sample
+	// if token := c.Unsubscribe(topicprefix + "/sample"); token.Wait() && token.Error() != nil {
+	// 	fmt.Println(token.Error())
+	// 	os.Exit(1)
+	// }
+
+	c.Disconnect(250)
 }
 
 func CheckIn(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Time) error {
@@ -656,6 +606,7 @@ func CheckIn(tx *sql.Tx, argv []string, handle string, effectiveTimeNow time.Tim
 		//end:
 		//duration    time.Duration
 	}
+	SendMQTT(handle)
 	addTime(tx, entry, hdr)
 	fmt.Printf("Checked into %s\n", headerText)
 	return nil
@@ -670,6 +621,7 @@ func ChangeCheckIn(tx *sql.Tx, argv []string, handle string, effectiveTimeNow ti
 		}
 		header = argv[0]
 	}
+	SendMQTT(handle)
 	//log.Println("header to check into: " + header)
 	hdr, headerText, err := findHeader(tx, header, handle)
 	if err != nil {
@@ -850,6 +802,7 @@ from headers h
 where h.active=1
 and lower(h.header) like lower('%'||?||'%')`, filter)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	for rows.Next() {
 		var id int
 		var head string
@@ -935,6 +888,7 @@ from entries e, p
 join headers h on e.header_id = h.header_id
 where p.efftime>=e.start and (e.end is null or p.efftime<=e.end)`, effectiveTimeNow)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	for rows.Next() {
 		var huuid string
 		rows.Scan(&huuid)
@@ -949,6 +903,7 @@ func Running(db *sql.DB, argv []string, extra string, effectiveTimeNow time.Time
 	join headers h on h.header_id = e.header_id
 	where e.end is null`)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	for rows.Next() {
 		var start time.Time
 		var header string
@@ -996,6 +951,7 @@ and ((p.filter is null or lower(l.log_text) like lower('%'||p.filter||'%'))
 order by creation_date asc
 `, from, to, filter /*handle*/)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	for rows.Next() {
 		var txt string
 		var handles string
@@ -1089,6 +1045,7 @@ and h.active=1
 order by sum_duration desc
 `, from, to, filter)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	total := time.Duration(0)
 	rounderr := time.Duration(0)
 
@@ -1126,6 +1083,7 @@ group by header, handle, start_date
 order by start_date asc
 `, from, to, filter)
 	defer rows.Close()
+	defer checkDBErr(rows)
 
 	total := time.Duration(0)
 	rounderr := time.Duration(0)
@@ -1291,6 +1249,7 @@ group by header, handle, start_date
 order by header, start_date asc
 `, from, to, filter, filter)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	total := time.Duration(0)
 	rounderr := time.Duration(0)
 
@@ -1354,6 +1313,7 @@ group by header, handle, start_date
 order by header, start_date asc
 `, from, to, filter, filter)
 	defer rows.Close()
+	defer checkDBErr(rows)
 	total := time.Duration(0)
 	rounderr := time.Duration(0)
 
@@ -1396,6 +1356,7 @@ func ShowOrg(db *sql.DB, argv []string) error {
 	from entries where
 		(start between ? and ? or (end is null and current_timestamp between ? and ?)))`, filter, from, to, from, to)
 	defer hdrs.Close()
+	defer checkDBErr(hdrs)
 	for hdrs.Next() {
 		var hid int
 		var headerTxt string
@@ -1430,6 +1391,7 @@ func ShowOrg(db *sql.DB, argv []string) error {
 			}
 			fmt.Printf("%s\n", clockEntry)
 		}
+		checkDBErr(entr)
 		entr.Close()
 	}
 	return nil
@@ -1452,6 +1414,7 @@ func ShowLedger(db *sql.DB, argv []string) (err error) {
 		and (start between ? and ? or (end is null and current_timestamp between ? and ?))
 		order by h.header_id, e.start asc`, filter, from, to, from, to)
 	defer entr.Close()
+	defer checkDBErr(entr)
 	roundDay := ""
 	roundHeader := ""
 	roundDur := time.Duration(0)

@@ -8,3 +8,9 @@ bias = "5m"             # default is "0m"
 display-rounding = true # default is false
 #style="time"
 
+[mqtt]
+topic-prefix="punch"
+broker="tcp://iot.eclipse.org:1883"
+client-id=""
+username="freddy"
+password="fredpw"
