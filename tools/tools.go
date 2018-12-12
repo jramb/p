@@ -554,7 +554,9 @@ func SendMQTT(text string) {
 	//create and start a client using the above ClientOptions
 	c := MQTT.NewClient(opts)
 	if token := c.Connect(); token.Wait() && token.Error() != nil {
-		panic(token.Error())
+		fmt.Println("MQTT: ", token.Error())
+		// panic(token.Error())
+		return
 	}
 
 	//subscribe to the topic /go-mqtt/sample and request messages to be delivered
